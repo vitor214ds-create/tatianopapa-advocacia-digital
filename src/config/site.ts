@@ -7,7 +7,25 @@
  * interface, ou exibidos como "A informar".
  */
 
-export const site = {
+interface SiteConfig {
+  nome: string;
+  cargo: string;
+  oab: string;
+  especialidade: string;
+  atendimento: string;
+  whatsapp: string;
+  whatsappExibicao: string;
+  email: string;
+  endereco: string;
+  instagram: string;
+  formacao: string[];
+  posGraduacoes: string[];
+  cursos: string[];
+  posicionamento: string;
+  aviso: string;
+}
+
+export const site: SiteConfig = {
   nome: "Tatiano Papa",
   cargo: "Advogado",
   oab: "OAB/SP 394.579",
@@ -23,9 +41,9 @@ export const site = {
   endereco: "",
   instagram: "",
   /** Ex: ["Bacharel em Direito - Universidade X"] */
-  formacao: [] as string[],
-  posGraduacoes: [] as string[],
-  cursos: [] as string[],
+  formacao: [],
+  posGraduacoes: [],
+  cursos: [],
   // ========================================
 
   posicionamento:
@@ -33,7 +51,7 @@ export const site = {
 
   aviso:
     "As informações apresentadas são de caráter informativo. A existência do direito depende da análise individual do caso e dos requisitos legais aplicáveis.",
-} as const;
+};
 
 export const whatsappMensagens = {
   padrao:
