@@ -43,7 +43,7 @@ export function Quiz({ id = "quiz" }: { id?: string }) {
 
   const total = perguntas.length;
   const progresso = finalizado ? 100 : Math.round((step / total) * 100);
-  const atual = perguntas[step];
+  const atual = perguntas[step] ?? perguntas[0]!;
 
   function responder(valor: string) {
     setRespostas((prev) => ({ ...prev, [atual.id]: valor }));
