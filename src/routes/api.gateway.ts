@@ -2,6 +2,50 @@ import { createFileRoute } from "@tanstack/react-router";
 import { authorizeOrganization, requireAdmin } from "../lib/server-auth";
 import { createInstance, deleteInstance, getConnectionState, getQr, logoutInstance } from "../lib/gateway/evolution";
 
+function getSupabaseConfig(request: Request) {
+  const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
+  const key = process.env.SUPABASE_ANON_KEY;
+  const authorization = request.headers.get("authorization");
+  if (!url || !key || !authorization) throw new Error("Supabase server config ausente");
+  return { url, headers: { apikey: key, Authorization: authorization, "Content-Type": "application/json", Prefer: "return=representation" } };
+}
+
+async function saveAccount(request: Request, organizationId: string, instanceName: string, status: string) {
+  const { url, headers } = getSupabaseConfig(request);
+  const existingResponse = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}&select=id&limit=1`, { headers });
+  const existing = existingResponse.ok ? await existingResponse.json() as { id: string }[] : [];
+  const payload = {
+    organization_id: organizationId,
+    internal_name: instanceName,
+    provider: "evolution_baileys",
+    session_id: instanceName,
+    status,
+    connection_status: status,
+    session_status: status,
+    reconnect_required: false,
+    is_enabled: true,
+    last_seen_at: new Date().toISOString(),
+  };
+
+  if (existing[0]) {
+    const response = await fetch(`${url}/rest/v1/whatsapp_accounts?id=eq.${existing[0].id}`, { method: "PATCH", headers, body: JSON.stringify(payload) });
+    if (!response.ok) throw new Error(`Falha ao atualizar sessão no banco: ${await response.text()}`);
+    return (await response.json() as unknown[])[0];
+  }
+
+  const response = await fetch(`${url}/rest/v1/whatsapp_accounts`, { method: "POST", headers, body: JSON.stringify(payload) });
+  if (!response.ok) throw new Error(`Falha ao registrar sessão no banco: ${await response.text()}`);
+  return (await response.json() as unknown[])[0];
+}
+
+async function patchAccount(request: Request, organizationId: string, instanceName: string, patch: Record<string, unknown>) {
+  const { url, headers } = getSupabaseConfig(request);
+  const response = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}`, {
+    method: "PATCH", headers, body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+  });
+  if (!response.ok) throw new Error(`Falha ao atualizar sessão: ${await response.text()}`);
+}
+
 export const Route = createFileRoute("/api/gateway")({
   server: {
     handlers: {
@@ -18,24 +62,45 @@ export const Route = createFileRoute("/api/gateway")({
 
           const user = await authorizeOrganization(request, body.organizationId);
           requireAdmin(user);
-
           const safeName = body.instanceName.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
           let result;
+          let account: unknown = null;
+
           switch (body.action) {
             case "create": {
               const origin = new URL(request.url).origin;
               const webhookSecret = process.env.GATEWAY_WEBHOOK_SECRET;
               const webhook = webhookSecret ? `${origin}/api/gateway-webhook?secret=${encodeURIComponent(webhookSecret)}` : undefined;
               result = await createInstance(safeName, webhook);
+              account = await saveAccount(request, body.organizationId, safeName, "CONNECTING");
               break;
             }
-            case "qr": result = await getQr(safeName); break;
-            case "status": result = await getConnectionState(safeName); break;
-            case "logout": result = await logoutInstance(safeName); break;
-            case "delete": result = await deleteInstance(safeName); break;
+            case "qr": {
+              result = await getQr(safeName);
+              await patchAccount(request, body.organizationId, safeName, { session_status: "WAITING_QR", connection_status: "WAITING_QR", qr_expires_at: new Date(Date.now() + 60_000).toISOString() });
+              break;
+            }
+            case "status": {
+              result = await getConnectionState(safeName);
+              const rawState = String(result.status || "").toUpperCase();
+              const normalized = rawState.includes("OPEN") || rawState.includes("CONNECTED") ? "CONNECTED" : rawState.includes("CONNECTING") ? "CONNECTING" : "DISCONNECTED";
+              await patchAccount(request, body.organizationId, safeName, { session_status: normalized, connection_status: normalized, reconnect_required: normalized === "DISCONNECTED", last_seen_at: new Date().toISOString(), connected_at: normalized === "CONNECTED" ? new Date().toISOString() : null });
+              break;
+            }
+            case "logout": {
+              result = await logoutInstance(safeName);
+              await patchAccount(request, body.organizationId, safeName, { session_status: "DISCONNECTED", connection_status: "DISCONNECTED", reconnect_required: true });
+              break;
+            }
+            case "delete": {
+              result = await deleteInstance(safeName);
+              const { url, headers } = getSupabaseConfig(request);
+              await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(body.organizationId)}&session_id=eq.${encodeURIComponent(safeName)}`, { method: "DELETE", headers });
+              break;
+            }
           }
 
-          return Response.json({ ok: true, result });
+          return Response.json({ ok: true, result, account });
         } catch (error) {
           if (error instanceof Response) return error;
           return Response.json({ error: error instanceof Error ? error.message : "Erro inesperado no gateway" }, { status: 500 });
