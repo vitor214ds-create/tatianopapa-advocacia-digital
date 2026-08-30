@@ -57,7 +57,7 @@ function LoginPage() {
             {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
             <button disabled={loading || checking} className="mt-2 h-12 w-full rounded-xl bg-[#249b4e] font-semibold text-white transition hover:bg-[#1f8844] disabled:cursor-wait disabled:opacity-60">{checking ? "Verificando sessão..." : loading ? "Entrando..." : "Entrar"}</button>
           </form>
-          <p className="mt-6 text-center text-xs leading-5 text-[#8b9890]">Se a configuração Supabase falhar, o acesso Owner de contingência continua disponível no servidor.</p>
+          <p className="mt-6 text-center text-xs leading-5 text-[#8b9890]">Autenticação protegida pelo Supabase Auth com sessão em cookies HttpOnly.</p>
         </section>
       </div>
     </div>
