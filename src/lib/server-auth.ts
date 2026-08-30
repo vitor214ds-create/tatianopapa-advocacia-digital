@@ -10,13 +10,25 @@ function env(name: string) {
   return value;
 }
 
+function getCookie(request: Request, name: string) {
+  const header = request.headers.get("cookie") || "";
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    const index = trimmed.indexOf("=");
+    if (index === -1) continue;
+    if (trimmed.slice(0, index) === name) return decodeURIComponent(trimmed.slice(index + 1));
+  }
+  return null;
+}
+
 export async function authorizeOrganization(request: Request, organizationId: string): Promise<AuthorizedUser> {
   const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) throw new Response("Não autenticado", { status: 401 });
+  const bearerToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  const token = bearerToken || getCookie(request, "zapflow_access_token");
+  if (!token) throw new Response("Não autenticado", { status: 401 });
 
   const supabaseUrl = env("SUPABASE_URL").replace(/\/$/, "");
   const supabaseKey = env("SUPABASE_ANON_KEY");
-  const token = authorization.slice(7);
 
   const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
     headers: { apikey: supabaseKey, Authorization: `Bearer ${token}` },
