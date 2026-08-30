@@ -10,6 +10,17 @@ function getSupabaseConfig(request: Request) {
   return { url, headers: { apikey: key, Authorization: authorization, "Content-Type": "application/json", Prefer: "return=representation" } };
 }
 
+async function listAccounts(request: Request, organizationId: string) {
+  const { url, headers } = getSupabaseConfig(request);
+  const select = encodeURIComponent("id,internal_name,phone,session_id,status,connection_status,session_status,distribution_weight,weight,is_enabled,reconnect_required,last_seen_at,connected_at,qr_expires_at,created_at,updated_at");
+  const response = await fetch(
+    `${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&order=created_at.asc`,
+    { headers },
+  );
+  if (!response.ok) throw new Error(`Falha ao carregar sessões: ${await response.text()}`);
+  return await response.json();
+}
+
 async function saveAccount(request: Request, organizationId: string, instanceName: string, status: string) {
   const { url, headers } = getSupabaseConfig(request);
   const existingResponse = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}&select=id&limit=1`, { headers });
@@ -49,6 +60,23 @@ async function patchAccount(request: Request, organizationId: string, instanceNa
 export const Route = createFileRoute("/api/gateway")({
   server: {
     handlers: {
+      GET: async ({ request }) => {
+        try {
+          const url = new URL(request.url);
+          const organizationId = url.searchParams.get("organizationId");
+          if (!organizationId) {
+            return Response.json({ error: "organizationId é obrigatório" }, { status: 400 });
+          }
+
+          const user = await authorizeOrganization(request, organizationId);
+          requireAdmin(user);
+          const accounts = await listAccounts(request, organizationId);
+          return Response.json({ ok: true, accounts });
+        } catch (error) {
+          if (error instanceof Response) return error;
+          return Response.json({ error: error instanceof Error ? error.message : "Erro inesperado ao listar sessões" }, { status: 500 });
+        }
+      },
       POST: async ({ request }) => {
         try {
           const body = await request.json() as {
