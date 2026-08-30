@@ -1,3 +1,5 @@
+import { runtimeEnv } from "../runtime-env";
+
 type EvolutionConfig = {
   baseUrl: string;
   apiKey: string;
@@ -11,8 +13,8 @@ export type GatewayInstance = {
 };
 
 function getConfig(): EvolutionConfig {
-  const baseUrl = process.env.EVOLUTION_API_URL?.replace(/\/$/, "");
-  const apiKey = process.env.EVOLUTION_API_KEY;
+  const baseUrl = runtimeEnv("EVOLUTION_API_URL")?.replace(/\/$/, "");
+  const apiKey = runtimeEnv("EVOLUTION_API_KEY");
   if (!baseUrl || !apiKey) {
     throw new Error("Gateway não configurado: defina EVOLUTION_API_URL e EVOLUTION_API_KEY no servidor.");
   }
@@ -32,7 +34,12 @@ async function evolutionFetch(path: string, init?: RequestInit) {
 
   const text = await response.text();
   let data: unknown = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
   if (!response.ok) {
     throw new Error(`Evolution API ${response.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`);
   }
