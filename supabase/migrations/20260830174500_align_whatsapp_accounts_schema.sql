@@ -1,0 +1,17 @@
+alter table public.whatsapp_accounts
+  add column if not exists internal_name text,
+  add column if not exists phone text,
+  add column if not exists provider text,
+  add column if not exists session_id text,
+  add column if not exists status text,
+  add column if not exists connection_status text,
+  add column if not exists session_status text,
+  add column if not exists distribution_weight integer default 100,
+  add column if not exists weight integer default 100,
+  add column if not exists is_enabled boolean default true,
+  add column if not exists reconnect_required boolean default false,
+  add column if not exists last_seen_at timestamptz,
+  add column if not exists connected_at timestamptz,
+  add column if not exists qr_expires_at timestamptz,
+  add column if not exists created_at timestamptz default now(),
+  add column if not exists updated_at timestamptz default now();
