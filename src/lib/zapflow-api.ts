@@ -75,7 +75,15 @@ export async function logout() {
 }
 
 export async function listWhatsAppAccounts(organizationId: string) {
-  return json<{ ok: true; gatewayConfigured: boolean; accounts: WhatsAppAccount[] }>(await protectedFetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`));
+  return json<{ ok: true; gatewayConfigured: boolean; gatewayBaseUrl?: string | null; accounts: WhatsAppAccount[] }>(await protectedFetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`));
+}
+
+export async function configureGateway(organizationId: string, baseUrl: string, apiKey: string) {
+  return json<{ ok: true; gatewayConfigured: boolean; gatewayBaseUrl?: string | null }>(await protectedFetch("/api/gateway", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ organizationId, action: "configure", baseUrl, apiKey }),
+  }));
 }
 
 export async function gatewayAction(organizationId: string, action: "create" | "qr" | "status" | "logout" | "delete", instanceName: string) {
