@@ -3,7 +3,7 @@ export type AuthState = {
   user: { id: string; email: string | null };
   memberships: { organization_id: string; role: string }[];
   activeOrganizationId: string | null;
-  authMode?: "direct-access" | "supabase";
+  authMode?: "supabase" | "emergency-local";
 };
 
 export type WhatsAppAccount = {
@@ -36,9 +36,6 @@ export type Campaign = {
   updated_at: string;
 };
 
-const DIRECT_USER_ID = "72c26158-ba53-4c98-b1bb-b6dd5432c7cf";
-const DIRECT_ORGANIZATION_ID = "c3b3518d-4565-415f-99f1-a1f3c8f0487a";
-
 async function json<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((data as { error?: string }).error || `Erro HTTP ${response.status}`);
@@ -50,21 +47,31 @@ async function rawFetch(input: RequestInfo | URL, init: RequestInit = {}) {
 }
 
 async function protectedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  let response = await rawFetch(input, init);
+  if (response.status !== 401) return response;
+  const auth = await rawFetch("/api/auth");
+  if (!auth.ok) return response;
   return rawFetch(input, init);
 }
 
-export async function getAuthState(): Promise<AuthState> {
-  return {
-    authenticated: true,
-    user: { id: DIRECT_USER_ID, email: "admin@zapflow.app" },
-    memberships: [{ organization_id: DIRECT_ORGANIZATION_ID, role: "OWNER" }],
-    activeOrganizationId: DIRECT_ORGANIZATION_ID,
-    authMode: "direct-access",
-  };
+export async function login(email: string, password: string) {
+  return json<AuthState>(await rawFetch("/api/auth", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "login", email, password }),
+  }));
+}
+
+export async function getAuthState() {
+  return json<AuthState>(await rawFetch("/api/auth"));
 }
 
 export async function logout() {
-  return { ok: true };
+  return json<{ ok: boolean }>(await rawFetch("/api/auth", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "logout" }),
+  }));
 }
 
 export async function listWhatsAppAccounts(organizationId: string) {
