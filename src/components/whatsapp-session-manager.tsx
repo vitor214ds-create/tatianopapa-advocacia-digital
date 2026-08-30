@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, MoreHorizontal, QrCode, RefreshCw, Smartphone, Trash2, Unplug, X } from "lucide-react";
-import { gatewayAction, listWhatsAppAccounts, qrImageSource, type WhatsAppAccount } from "../lib/zapflow-api";
+import { configureGateway, gatewayAction, listWhatsAppAccounts, qrImageSource, type WhatsAppAccount } from "../lib/zapflow-api";
 
 type Props = { organizationId: string; onConnectedCountChange?: (count: number) => void };
 type ModalState = { instanceName: string; qr: string | null; loading: boolean; error: string | null } | null;
@@ -13,6 +13,10 @@ function slotName(index: number) { return `WhatsApp ${String(index + 1).padStart
 export function WhatsAppSessionManager({ organizationId, onConnectedCountChange }: Props) {
   const [accounts, setAccounts] = useState<WhatsAppAccount[]>([]);
   const [gatewayConfigured, setGatewayConfigured] = useState(false);
+  const [gatewayBaseUrl, setGatewayBaseUrl] = useState("");
+  const [configUrl, setConfigUrl] = useState("");
+  const [configKey, setConfigKey] = useState("");
+  const [configBusy, setConfigBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -27,6 +31,8 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
       const response = await listWhatsAppAccounts(organizationId);
       setAccounts(response.accounts || []);
       setGatewayConfigured(Boolean(response.gatewayConfigured));
+      setGatewayBaseUrl(response.gatewayBaseUrl || "");
+      if (response.gatewayBaseUrl) setConfigUrl(response.gatewayBaseUrl);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível carregar as sessões.");
@@ -36,8 +42,19 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
   useEffect(() => { void refresh(); const id = window.setInterval(() => void refresh(), 15000); return () => window.clearInterval(id); }, [organizationId]);
   useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
 
+  async function saveGatewayConfig() {
+    setConfigBusy(true); setError(null);
+    try {
+      await configureGateway(organizationId, configUrl.trim(), configKey.trim());
+      setConfigKey("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar o gateway.");
+    } finally { setConfigBusy(false); }
+  }
+
   async function openQr(instanceName: string, createFirst = false) {
-    if (!gatewayConfigured) { setError("A conexão por QR será liberada assim que a Evolution API estiver configurada no servidor."); return; }
+    if (!gatewayConfigured) { setError("Configure a Evolution API abaixo antes de conectar por QR."); return; }
     setModal({ instanceName, qr: null, loading: true, error: null });
     setBusy(instanceName);
     try {
@@ -59,7 +76,11 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
         const response = await gatewayAction(organizationId, "status", instanceName);
         const state = String(response?.result?.status || "").toUpperCase();
         await refresh();
-        if (state.includes("OPEN") || state.includes("CONNECTED")) { if (pollRef.current) window.clearInterval(pollRef.current); pollRef.current = null; setModal(null); }
+        if (state.includes("OPEN") || state.includes("CONNECTED")) {
+          if (pollRef.current) window.clearInterval(pollRef.current);
+          pollRef.current = null;
+          setModal(null);
+        }
       } catch { }
     }, 3500);
   }
@@ -67,7 +88,7 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
   function closeModal() { if (pollRef.current) window.clearInterval(pollRef.current); pollRef.current = null; setModal(null); }
 
   async function runAction(account: WhatsAppAccount, action: "status" | "logout" | "delete") {
-    if (!gatewayConfigured) { setError("Gateway Evolution ainda não configurado no servidor."); return; }
+    if (!gatewayConfigured) { setError("Configure a Evolution API antes de administrar sessões."); return; }
     const instanceName = account.session_id;
     if (action === "delete" && !window.confirm(`Excluir a sessão ${account.internal_name || instanceName}?`)) return;
     setBusy(instanceName); setError(null);
@@ -79,9 +100,9 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
   const slots = Array.from({ length: MAX_SESSIONS }, (_, index) => ({ index, account: accounts[index] || null }));
 
   return <>
-    <div className="page-heading"><div><span className="eyebrow">Sessões reais</span><h1>Números WhatsApp</h1><p>Conecte e gerencie até 10 números independentes. O QR só é gerado quando o gateway real estiver disponível.</p></div><button className="btn btn-soft" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? "animate-spin" : ""}/>Atualizar</button></div>
+    <div className="page-heading"><div><span className="eyebrow">Sessões reais</span><h1>Números WhatsApp</h1><p>Conecte e gerencie até 10 números independentes. O QR é gerado pela Evolution API hospedada.</p></div><button className="btn btn-soft" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? "animate-spin" : ""}/>Atualizar</button></div>
 
-    {gatewayConfigured ? <div className="notice"><CheckCircle2 size={20}/><div><strong>Gateway pronto</strong><p>A Evolution API está configurada no servidor. As chaves permanecem somente no backend.</p></div></div> : <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><AlertTriangle size={18} className="mt-0.5 shrink-0"/><div><strong className="block">Configuração do WhatsApp necessária</strong><span>A estrutura do ZapFlow está pronta, mas ainda falta conectar uma Evolution API real ao servidor. Enquanto isso, o QR fica desabilitado para evitar erros falsos.</span></div></div>}
+    {gatewayConfigured ? <div className="notice"><CheckCircle2 size={20}/><div><strong>Gateway pronto</strong><p>Evolution conectada{gatewayBaseUrl ? ` em ${gatewayBaseUrl}` : ""}. A API key fica protegida no Supabase Vault.</p></div></div> : <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0"/><div className="w-full"><strong className="block">Conecte sua Evolution API hospedada</strong><p className="mt-1">Informe a URL HTTPS e a API key. A chave será guardada no Supabase Vault e não será exibida novamente.</p><div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]"><input className="h-11 rounded-xl border border-amber-200 bg-white px-3 outline-none" placeholder="https://evolution.seudominio.com" value={configUrl} onChange={e=>setConfigUrl(e.target.value)}/><input className="h-11 rounded-xl border border-amber-200 bg-white px-3 outline-none" type="password" placeholder="API key da Evolution" value={configKey} onChange={e=>setConfigKey(e.target.value)}/><button className="btn btn-primary" disabled={configBusy || !configUrl.trim() || configKey.trim().length < 20} onClick={() => void saveGatewayConfig()}>{configBusy ? <Loader2 size={16} className="animate-spin"/> : null}Salvar gateway</button></div></div></div></div>}
 
     {error && <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><AlertTriangle size={18} className="mt-0.5 shrink-0"/><span>{error}</span></div>}
 
@@ -95,18 +116,7 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
           const stateLabel = connectedNow ? "Conectado" : waiting ? "Aguardando conexão" : account ? "Desconectado" : "Disponível";
           const weight = account?.distribution_weight ?? account?.weight ?? 100;
           const isBusy = busy === instanceName;
-          return <div key={instanceName} className="rounded-2xl border border-[#e2e9e3] bg-white p-4 shadow-[0_7px_24px_rgba(21,47,28,.035)]">
-            <div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#edf8f0] text-[#269451]"><Smartphone size={21}/></div><div><strong className="block text-sm text-[#26392d]">{account?.internal_name || slotName(index)}</strong><span className="mt-1 block text-[11px] text-[#87958c]">{account?.phone || "Nenhum telefone identificado"}</span></div></div><span className={`status ${connectedNow ? "status-success" : waiting ? "status-warning" : "status-neutral"}`}>{stateLabel}</span></div>
-            <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-[#f7f9f7] p-3 text-[11px]"><div><span className="block text-[#8a988f]">Peso</span><strong className="mt-1 block text-[#304237]">{weight}</strong></div><div><span className="block text-[#8a988f]">Último sinal</span><strong className="mt-1 block text-[#304237]">{account?.last_seen_at ? new Date(account.last_seen_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong></div></div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {!account && <button className="btn btn-primary flex-1" onClick={() => void openQr(instanceName, true)} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <QrCode size={16}/>}Conectar por QR</button>}
-              {account && !connectedNow && <button className="btn btn-primary flex-1" onClick={() => void openQr(instanceName)} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <QrCode size={16}/>}Gerar novo QR</button>}
-              {account && connectedNow && <button className="btn btn-soft flex-1" onClick={() => void runAction(account, "status")} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <RefreshCw size={16}/>}Verificar</button>}
-              {account && <button className="btn btn-soft" title="Desconectar" onClick={() => void runAction(account, "logout")} disabled={isBusy || !gatewayConfigured}><Unplug size={16}/></button>}
-              {account && <button className="btn btn-soft" title="Excluir sessão" onClick={() => void runAction(account, "delete")} disabled={isBusy || !gatewayConfigured}><Trash2 size={16}/></button>}
-              {!account && <button className="btn btn-soft" disabled aria-label="Mais opções"><MoreHorizontal size={16}/></button>}
-            </div>
-          </div>;
+          return <div key={instanceName} className="rounded-2xl border border-[#e2e9e3] bg-white p-4 shadow-[0_7px_24px_rgba(21,47,28,.035)]"><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#edf8f0] text-[#269451]"><Smartphone size={21}/></div><div><strong className="block text-sm text-[#26392d]">{account?.internal_name || slotName(index)}</strong><span className="mt-1 block text-[11px] text-[#87958c]">{account?.phone || "Nenhum telefone identificado"}</span></div></div><span className={`status ${connectedNow ? "status-success" : waiting ? "status-warning" : "status-neutral"}`}>{stateLabel}</span></div><div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-[#f7f9f7] p-3 text-[11px]"><div><span className="block text-[#8a988f]">Peso</span><strong className="mt-1 block text-[#304237]">{weight}</strong></div><div><span className="block text-[#8a988f]">Último sinal</span><strong className="mt-1 block text-[#304237]">{account?.last_seen_at ? new Date(account.last_seen_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong></div></div><div className="mt-4 flex flex-wrap gap-2">{!account && <button className="btn btn-primary flex-1" onClick={() => void openQr(instanceName, true)} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <QrCode size={16}/>}Conectar por QR</button>}{account && !connectedNow && <button className="btn btn-primary flex-1" onClick={() => void openQr(instanceName)} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <QrCode size={16}/>}Gerar novo QR</button>}{account && connectedNow && <button className="btn btn-soft flex-1" onClick={() => void runAction(account, "status")} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <RefreshCw size={16}/>}Verificar</button>}{account && <button className="btn btn-soft" title="Desconectar" onClick={() => void runAction(account, "logout")} disabled={isBusy || !gatewayConfigured}><Unplug size={16}/></button>}{account && <button className="btn btn-soft" title="Excluir sessão" onClick={() => void runAction(account, "delete")} disabled={isBusy || !gatewayConfigured}><Trash2 size={16}/></button>}{!account && <button className="btn btn-soft" disabled aria-label="Mais opções"><MoreHorizontal size={16}/></button>}</div></div>;
         })}
       </div>
     </section>
