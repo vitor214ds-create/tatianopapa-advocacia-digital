@@ -20,30 +20,73 @@ export type WhatsAppAccount = {
   last_seen_at?: string | null;
 };
 
+export type Campaign = {
+  id: string;
+  name: string;
+  status: string;
+  total_recipients: number;
+  eligible_recipients: number;
+  rejected_recipients: number;
+  sent_count: number;
+  failed_count: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 async function json<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((data as { error?: string }).error || `Erro HTTP ${response.status}`);
   return data as T;
 }
 
+async function rawFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  return fetch(input, { ...init, credentials: "include" });
+}
+
+async function protectedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  let response = await rawFetch(input, init);
+  if (response.status !== 401) return response;
+  const refresh = await rawFetch("/api/auth");
+  if (!refresh.ok) return response;
+  response = await rawFetch(input, init);
+  return response;
+}
+
 export async function getAuthState() {
-  return json<AuthState>(await fetch("/api/auth", { credentials: "include" }));
+  return json<AuthState>(await rawFetch("/api/auth"));
 }
 
 export async function logout() {
-  return json<{ ok: boolean }>(await fetch("/api/auth", {
-    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }),
+  return json<{ ok: boolean }>(await rawFetch("/api/auth", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }),
   }));
 }
 
 export async function listWhatsAppAccounts(organizationId: string) {
-  return json<{ ok: true; accounts: WhatsAppAccount[] }>(await fetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`, { credentials: "include" }));
+  return json<{ ok: true; accounts: WhatsAppAccount[] }>(await protectedFetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`));
 }
 
 export async function gatewayAction(organizationId: string, action: "create" | "qr" | "status" | "logout" | "delete", instanceName: string) {
-  return json<any>(await fetch("/api/gateway", {
-    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+  return json<any>(await protectedFetch("/api/gateway", {
+    method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ organizationId, action, instanceName }),
+  }));
+}
+
+export async function listCampaigns(organizationId: string) {
+  return json<{ ok: true; campaigns: Campaign[] }>(await protectedFetch(`/api/campaigns?organizationId=${encodeURIComponent(organizationId)}`));
+}
+
+export async function createCampaign(input: {
+  organizationId: string;
+  name: string;
+  message: string;
+  recipients: Array<{ id?: string; name?: string; phone: string; consent: boolean; suppressed?: boolean }>;
+}) {
+  return json<{ ok: true; status: string; campaignId: string; eligible: number; rejected: number; sessions: number }>(await protectedFetch("/api/campaigns", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   }));
 }
 
