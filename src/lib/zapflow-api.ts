@@ -3,7 +3,7 @@ export type AuthState = {
   user: { id: string; email: string | null };
   memberships: { organization_id: string; role: string }[];
   activeOrganizationId: string | null;
-  authMode?: "supabase" | "emergency-local";
+  authMode?: "supabase";
 };
 
 export type WhatsAppAccount = {
@@ -75,7 +75,7 @@ export async function logout() {
 }
 
 export async function listWhatsAppAccounts(organizationId: string) {
-  return json<{ ok: true; accounts: WhatsAppAccount[] }>(await protectedFetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`));
+  return json<{ ok: true; gatewayConfigured: boolean; accounts: WhatsAppAccount[] }>(await protectedFetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`));
 }
 
 export async function gatewayAction(organizationId: string, action: "create" | "qr" | "status" | "logout" | "delete", instanceName: string) {
