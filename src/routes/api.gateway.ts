@@ -11,6 +11,8 @@ import {
 } from "../lib/gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
 
+const DEFAULT_RAILWAY_EVOLUTION_URL = "http://evolution-api.railway.internal:8080";
+
 function cookieToken(request: Request) {
   const header = request.headers.get("cookie") || "";
   for (const part of header.split(";")) {
@@ -40,9 +42,40 @@ function getSupabaseConfig(request: Request) {
   };
 }
 
+function normalizeEvolutionBaseUrl(value?: string | null) {
+  let raw = String(value || "").trim().replace(/\/$/, "");
+  if (!raw) return null;
+
+  const ownPrivateDomain = String(runtimeEnv("RAILWAY_PRIVATE_DOMAIN") || "").trim().toLowerCase();
+  const hostOnly = raw.replace(/^https?:\/\//i, "").split("/")[0].toLowerCase();
+
+  // A common Railway misconfiguration is referencing the ZapFlow service's own
+  // RAILWAY_PRIVATE_DOMAIN instead of the Evolution service. Detect and repair it.
+  if (
+    (ownPrivateDomain && (hostOnly === ownPrivateDomain || hostOnly.startsWith(`${ownPrivateDomain}:`))) ||
+    hostOnly.startsWith("tatianopapa-advocacia-digital.railway.internal")
+  ) {
+    return DEFAULT_RAILWAY_EVOLUTION_URL;
+  }
+
+  if (!/^https?:\/\//i.test(raw)) raw = `http://${raw}`;
+
+  try {
+    const url = new URL(raw);
+    // Railway private DNS is plain HTTP inside the project network. Evolution
+    // listens on 8080 in the deployed container unless an explicit port exists.
+    if (url.hostname.endsWith(".railway.internal") && !url.port) {
+      url.port = "8080";
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
 function environmentGatewayConfig(): EvolutionConfig | null {
-  const baseUrl = runtimeEnv("EVOLUTION_API_URL")?.replace(/\/$/, "");
-  const apiKey = runtimeEnv("EVOLUTION_API_KEY");
+  const baseUrl = normalizeEvolutionBaseUrl(runtimeEnv("EVOLUTION_API_URL"));
+  const apiKey = runtimeEnv("EVOLUTION_API_KEY")?.trim();
   return baseUrl && apiKey ? { baseUrl, apiKey } : null;
 }
 
@@ -57,8 +90,9 @@ async function getOrganizationGatewayConfig(request: Request, organizationId: st
   if (response.ok) {
     const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
     const row = rows[0];
-    if (row?.base_url && row?.api_key) {
-      return { baseUrl: row.base_url.replace(/\/$/, ""), apiKey: row.api_key };
+    const normalizedUrl = normalizeEvolutionBaseUrl(row?.base_url);
+    if (normalizedUrl && row?.api_key) {
+      return { baseUrl: normalizedUrl, apiKey: row.api_key };
     }
   }
 
@@ -68,11 +102,14 @@ async function getOrganizationGatewayConfig(request: Request, organizationId: st
 }
 
 async function saveOrganizationGatewayConfig(request: Request, organizationId: string, baseUrl: string, apiKey: string) {
+  const normalizedUrl = normalizeEvolutionBaseUrl(baseUrl);
+  if (!normalizedUrl) throw new Error("URL da Evolution inválida");
+
   const { url, headers } = getSupabaseConfig(request);
   const response = await fetch(`${url}/rest/v1/rpc/set_evolution_gateway_config`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ p_organization_id: organizationId, p_base_url: baseUrl, p_api_key: apiKey }),
+    body: JSON.stringify({ p_organization_id: organizationId, p_base_url: normalizedUrl, p_api_key: apiKey }),
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -175,7 +212,7 @@ export const Route = createFileRoute("/api/gateway")({
 
           if (body.action === "configure") {
             if (!body.baseUrl || !body.apiKey) {
-              return Response.json({ error: "URL HTTPS e API key da Evolution são obrigatórias" }, { status: 400 });
+              return Response.json({ error: "URL e API key da Evolution são obrigatórias" }, { status: 400 });
             }
             await saveOrganizationGatewayConfig(request, body.organizationId, body.baseUrl, body.apiKey);
             const saved = await getOrganizationGatewayConfig(request, body.organizationId);
