@@ -36,6 +36,17 @@ export type Campaign = {
   updated_at: string;
 };
 
+export type MessageTemplate = {
+  id: string;
+  name: string;
+  content: string;
+  variables: string[];
+  category: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 async function json<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((data as { error?: string }).error || `Erro HTTP ${response.status}`);
@@ -108,6 +119,32 @@ export async function createCampaign(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  }));
+}
+
+export async function listTemplates(organizationId: string) {
+  return json<{ templates: MessageTemplate[] }>(await protectedFetch(`/api/templates?organizationId=${encodeURIComponent(organizationId)}`));
+}
+
+export async function saveTemplate(input: {
+  organizationId: string;
+  id?: string;
+  name: string;
+  content: string;
+  category?: string;
+}) {
+  return json<{ ok: true; template: MessageTemplate }>(await protectedFetch("/api/templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, action: input.id ? "update" : "create" }),
+  }));
+}
+
+export async function deleteTemplate(organizationId: string, id: string) {
+  return json<{ ok: true }>(await protectedFetch("/api/templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ organizationId, id, action: "delete" }),
   }));
 }
 
