@@ -41,7 +41,8 @@ export async function authorizeOrganization(request: Request, organizationId: st
 }
 
 export function requireAdmin(user: AuthorizedUser) {
-  if (!["OWNER", "ADMIN"].includes(user.role)) {
+  const normalizedRole = String(user.role || "").toLowerCase();
+  if (!["owner", "admin"].includes(normalizedRole)) {
     throw new Response("Ação restrita a Owner/Admin", { status: 403 });
   }
 }
