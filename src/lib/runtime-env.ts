@@ -7,6 +7,9 @@ declare global {
 
 const viteEnv = import.meta.env as Record<string, string | undefined>;
 
+const ZAPFLOW_SUPABASE_URL = "https://alahmdlzbmmxgbkqrdux.supabase.co";
+const ZAPFLOW_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_V189k3Jz2tZ01oKDXWOW6g_ngjZ1qm1";
+
 export function setRuntimeEnv(env: unknown) {
   if (env && typeof env === "object") globalThis.__zapflowRuntimeEnv = env as RuntimeEnv;
 }
@@ -26,17 +29,11 @@ export function runtimeEnv(...names: string[]) {
 }
 
 export function supabasePublicConfig() {
-  const url = runtimeEnv("SUPABASE_URL", "VITE_SUPABASE_URL")?.replace(/\/$/, "");
-  const key = runtimeEnv(
-    "SUPABASE_ANON_KEY",
-    "SUPABASE_PUBLISHABLE_KEY",
-    "VITE_SUPABASE_PUBLISHABLE_KEY",
-    "VITE_SUPABASE_ANON_KEY",
-  );
-
-  if (!url || !key) {
-    throw new Error("Configuração pública do Supabase não disponível");
-  }
-
-  return { url, key };
+  // ZapFlow has one canonical Supabase backend. These values are public client
+  // configuration, not privileged secrets. Pinning them here prevents a stale or
+  // mistyped Railway variable from silently sending authentication to another project.
+  return {
+    url: ZAPFLOW_SUPABASE_URL,
+    key: ZAPFLOW_SUPABASE_PUBLISHABLE_KEY,
+  };
 }
