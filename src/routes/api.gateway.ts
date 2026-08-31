@@ -40,6 +40,12 @@ function getSupabaseConfig(request: Request) {
   };
 }
 
+function environmentGatewayConfig(): EvolutionConfig | null {
+  const baseUrl = runtimeEnv("EVOLUTION_API_URL")?.replace(/\/$/, "");
+  const apiKey = runtimeEnv("EVOLUTION_API_KEY");
+  return baseUrl && apiKey ? { baseUrl, apiKey } : null;
+}
+
 async function getOrganizationGatewayConfig(request: Request, organizationId: string): Promise<EvolutionConfig | null> {
   const { url, headers } = getSupabaseConfig(request);
   const response = await fetch(`${url}/rest/v1/rpc/get_evolution_gateway_config`, {
@@ -47,11 +53,18 @@ async function getOrganizationGatewayConfig(request: Request, organizationId: st
     headers,
     body: JSON.stringify({ p_organization_id: organizationId }),
   });
-  if (!response.ok) return null;
-  const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
-  const row = rows[0];
-  if (!row?.base_url || !row?.api_key) return null;
-  return { baseUrl: row.base_url.replace(/\/$/, ""), apiKey: row.api_key };
+
+  if (response.ok) {
+    const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
+    const row = rows[0];
+    if (row?.base_url && row?.api_key) {
+      return { baseUrl: row.base_url.replace(/\/$/, ""), apiKey: row.api_key };
+    }
+  }
+
+  // Railway can inject these from the Evolution service through Reference Variables.
+  // Vault remains preferred when an organization-specific config exists.
+  return environmentGatewayConfig();
 }
 
 async function saveOrganizationGatewayConfig(request: Request, organizationId: string, baseUrl: string, apiKey: string) {
