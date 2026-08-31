@@ -12,6 +12,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.0
       - run: bun install --frozen-lockfile
       - run: bun run build
+      - name: Build Railway Docker image
+        run: docker build -t zapflow-railway-test .
