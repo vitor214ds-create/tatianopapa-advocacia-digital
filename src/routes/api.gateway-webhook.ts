@@ -22,9 +22,20 @@ export const Route = createFileRoute("/api/gateway-webhook")({
             return Response.json({ error: "Payload muito grande" }, { status: 413 });
           }
 
-          const payload = await request.json().catch(() => null) as Record<string, any> | null;
-          if (!payload) {
+          const raw = await request.text();
+          if (raw.length > 1_000_000) {
+            return Response.json({ error: "Payload muito grande" }, { status: 413 });
+          }
+
+          let payload: Record<string, any> | null = null;
+          try {
+            payload = JSON.parse(raw);
+          } catch {
             return Response.json({ error: "JSON inválido" }, { status: 400 });
+          }
+
+          if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+            return Response.json({ error: "Payload inválido" }, { status: 400 });
           }
 
           const event = String(payload.event || payload.type || "UNKNOWN").slice(0, 120);
