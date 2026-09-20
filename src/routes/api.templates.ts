@@ -25,6 +25,7 @@ function headers(request: Request) {
 }
 
 const ALLOWED_CATEGORIES = new Set(["general", "followup", "notification", "support"]);
+const ALLOWED_VARIABLES = new Set(["nome", "telefone"]);
 
 function cleanVariables(content: string) {
   const found = [...content.matchAll(/{{\s*([a-zA-Z0-9_]+)\s*}}/g)].map(match => match[1]);
@@ -109,11 +110,20 @@ export const Route = createFileRoute("/api/templates")({
             return Response.json({ error: "Categoria de template inválida" }, { status: 400 });
           }
 
+          const variables = cleanVariables(content);
+          const unsupportedVariable = variables.find(variable => !ALLOWED_VARIABLES.has(variable.toLowerCase()));
+          if (unsupportedVariable) {
+            return Response.json(
+              { error: `Variável não suportada: {{${unsupportedVariable}}}. Use apenas {{nome}} e {{telefone}}.` },
+              { status: 400 },
+            );
+          }
+
           const commonPayload = {
             organization_id: body.organizationId,
             name,
             content,
-            variables: cleanVariables(content),
+            variables,
             category,
             updated_at: new Date().toISOString(),
           };
