@@ -24,6 +24,167 @@ begin
   end if;
 end $$;
 
+create table if not exists public.whatsapp_session_events (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  whatsapp_account_id uuid references public.whatsapp_accounts(id) on delete cascade,
+  event_type text not null,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+alter table public.whatsapp_session_events enable row level security;
+
+create index if not exists zapflow_session_events_org_created_idx
+  on public.whatsapp_session_events(organization_id, created_at desc);
+create index if not exists zapflow_session_events_account_created_idx
+  on public.whatsapp_session_events(whatsapp_account_id, created_at desc);
+
+do $$
+begin
+  if not exists (select 1 from vault.secrets where name='zapflow:worker:secret') then
+    perform vault.create_secret(
+      encode(gen_random_bytes(32),'hex'),
+      'zapflow:worker:secret',
+      'ZapFlow durable queue worker secret',
+      null
+    );
+  end if;
+end $$;
+
+create or replace function public.zapflow_worker_secret_valid(p_secret text)
+returns boolean
+language sql
+security definer
+set search_path=public,vault
+as $$
+  select exists(
+    select 1 from vault.decrypted_secrets
+    where name='zapflow:worker:secret'
+      and decrypted_secret=p_secret
+  );
+$$;
+
+create or replace function public.zapflow_claim_message_jobs_secure(
+  p_worker_id text,
+  p_limit integer,
+  p_secret text
+)
+returns setof public.zapflow_message_jobs
+language plpgsql
+security definer
+set search_path=public,vault
+as $$
+begin
+  if not public.zapflow_worker_secret_valid(p_secret) then
+    raise exception 'unauthorized worker';
+  end if;
+
+  return query
+  with ranked as (
+    select j.id,
+           row_number() over (
+             partition by j.session_id
+             order by j.next_attempt_at asc,j.created_at asc
+           ) as rn
+    from public.zapflow_message_jobs j
+    where (
+      j.status in ('QUEUED','RETRY')
+      and j.next_attempt_at<=now()
+      and j.locked_at is null
+    ) or (
+      j.status='PROCESSING'
+      and j.locked_at<now()-interval '10 minutes'
+    )
+  ),
+  due as (
+    select j.id
+    from public.zapflow_message_jobs j
+    join ranked r on r.id=j.id
+    where r.rn=1
+    order by j.next_attempt_at asc,j.created_at asc
+    for update of j skip locked
+    limit greatest(1,least(coalesce(p_limit,20),50))
+  ),
+  claimed as (
+    update public.zapflow_message_jobs j
+    set status='PROCESSING',
+        locked_at=now(),
+        locked_by=p_worker_id,
+        attempts=j.attempts+1,
+        updated_at=now()
+    from due
+    where j.id=due.id
+    returning j.*
+  )
+  select * from claimed;
+end;
+$$;
+
+create or replace function public.zapflow_finish_message_job_secure(
+  p_job_id uuid,
+  p_success boolean,
+  p_provider_message_id text,
+  p_error text,
+  p_retry_at timestamptz,
+  p_secret text
+)
+returns void
+language plpgsql
+security definer
+set search_path=public,vault
+as $$
+declare
+  v_campaign_id uuid;
+  v_attempts integer;
+  v_max_attempts integer;
+  v_final boolean;
+begin
+  if not public.zapflow_worker_secret_valid(p_secret) then
+    raise exception 'unauthorized worker';
+  end if;
+
+  select campaign_id,attempts,max_attempts
+  into v_campaign_id,v_attempts,v_max_attempts
+  from public.zapflow_message_jobs
+  where id=p_job_id
+  for update;
+
+  if v_campaign_id is null then raise exception 'job not found'; end if;
+
+  if p_success then
+    update public.zapflow_message_jobs
+    set status='SENT',
+        sent_at=now(),
+        provider_message_id=p_provider_message_id,
+        last_error=null,
+        locked_at=null,
+        locked_by=null,
+        updated_at=now()
+    where id=p_job_id;
+  else
+    v_final:=coalesce(v_attempts,0)>=coalesce(v_max_attempts,3);
+    update public.zapflow_message_jobs
+    set status=case when v_final then 'FAILED' else 'RETRY' end,
+        next_attempt_at=case when v_final then next_attempt_at else coalesce(p_retry_at,now()+interval '2 minutes') end,
+        last_error=left(coalesce(p_error,'Falha inesperada'),2000),
+        locked_at=null,
+        locked_by=null,
+        updated_at=now()
+    where id=p_job_id;
+  end if;
+
+  perform public.zapflow_refresh_campaign_counters(v_campaign_id);
+end;
+$$;
+
+revoke all on function public.zapflow_worker_secret_valid(text) from public,anon,authenticated;
+grant execute on function public.zapflow_worker_secret_valid(text) to service_role;
+revoke all on function public.zapflow_claim_message_jobs_secure(text,integer,text) from public,authenticated;
+grant execute on function public.zapflow_claim_message_jobs_secure(text,integer,text) to anon;
+revoke all on function public.zapflow_finish_message_job_secure(uuid,boolean,text,text,timestamptz,text) from public,authenticated;
+grant execute on function public.zapflow_finish_message_job_secure(uuid,boolean,text,text,timestamptz,text) to anon;
+
 create or replace function public.zapflow_create_campaign_with_jobs(
   p_organization_id uuid,
   p_name text,
