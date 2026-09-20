@@ -229,13 +229,23 @@ export const Route = createFileRoute("/api/gateway")({
           }
 
           const safeName = body.instanceName.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
+          const expectedPrefix = `zapflow-${body.organizationId.slice(0, 8)}-`;
+          if (!safeName.startsWith(expectedPrefix)) {
+            return Response.json({ error: "Sessão não pertence a esta organização" }, { status: 403 });
+          }
+
+          const accounts = await listAccounts(request, body.organizationId);
+          const ownedAccount = accounts.find(item => item.session_id === safeName);
+          if (body.action !== "create" && !ownedAccount) {
+            return Response.json({ error: "Sessão não encontrada nesta organização" }, { status: 404 });
+          }
+
           let result;
           let account: unknown = null;
 
           switch (body.action) {
             case "create": {
-              const accounts = await listAccounts(request, body.organizationId);
-              const exists = accounts.some(item => item.session_id === safeName);
+              const exists = Boolean(ownedAccount);
               if (!exists && accounts.length >= 10) {
                 return Response.json({ error: "Limite de 10 sessões WhatsApp por organização atingido" }, { status: 409 });
               }
@@ -283,10 +293,13 @@ export const Route = createFileRoute("/api/gateway")({
             case "delete": {
               result = await deleteInstance(safeName, gatewayConfig);
               const { url, headers } = getSupabaseConfig(request);
-              await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(body.organizationId)}&session_id=eq.${encodeURIComponent(safeName)}`, {
+              const deleteResponse = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(body.organizationId)}&session_id=eq.${encodeURIComponent(safeName)}`, {
                 method: "DELETE",
                 headers,
               });
+              if (!deleteResponse.ok) {
+                throw new Error(`Falha ao remover sessão do banco: ${await deleteResponse.text()}`);
+              }
               break;
             }
           }
