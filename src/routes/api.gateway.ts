@@ -282,9 +282,12 @@ export const Route = createFileRoute("/api/gateway")({
             case "status": {
               result = await getConnectionState(safeName, gatewayConfig);
               const rawState = String(result.status || "").toUpperCase();
-              const normalized = rawState.includes("OPEN") || rawState.includes("CONNECTED")
-                ? "CONNECTED"
-                : rawState.includes("CONNECTING") ? "CONNECTING" : "DISCONNECTED";
+              const normalized =
+                rawState === "OPEN" || rawState === "CONNECTED"
+                  ? "CONNECTED"
+                  : rawState === "CONNECTING" || rawState === "PAIRING" || rawState === "WAITING_QR"
+                    ? "CONNECTING"
+                    : "DISCONNECTED";
               await patchAccount(request, body.organizationId, safeName, {
                 session_status: normalized,
                 connection_status: normalized,
