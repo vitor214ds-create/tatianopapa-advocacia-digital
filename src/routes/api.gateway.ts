@@ -185,32 +185,52 @@ export const Route = createFileRoute("/api/gateway")({
 
       POST: async ({ request }) => {
         try {
-          const body = await request.json() as {
+          const raw = await request.text();
+          if (raw.length > 32_000) {
+            return Response.json({ error: "Payload muito grande" }, { status: 413 });
+          }
+          let body: {
             action?: "configure" | "create" | "qr" | "status" | "logout" | "delete";
             organizationId?: string;
             instanceName?: string;
             baseUrl?: string;
             apiKey?: string;
           };
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            return Response.json({ error: "JSON inválido" }, { status: 400 });
+          }
 
           if (!body.organizationId || !body.action) {
             return Response.json({ error: "organizationId e action são obrigatórios" }, { status: 400 });
+          }
+
+          if (!["configure", "create", "qr", "status", "logout", "delete"].includes(body.action)) {
+            return Response.json({ error: "Ação inválida" }, { status: 400 });
           }
 
           const user = await authorizeOrganization(request, body.organizationId);
           requireAdmin(user);
 
           if (body.action === "configure") {
-            if (!body.baseUrl || !body.apiKey) {
-              return Response.json({ error: "URL e API key da Evolution são obrigatórias" }, { status: 400 });
+            if (
+              typeof body.baseUrl !== "string" ||
+              typeof body.apiKey !== "string" ||
+              !body.baseUrl.trim() ||
+              body.baseUrl.length > 2048 ||
+              body.apiKey.trim().length < 8 ||
+              body.apiKey.length > 1024
+            ) {
+              return Response.json({ error: "URL ou API key da Evolution inválida" }, { status: 400 });
             }
             await saveOrganizationGatewayConfig(request, body.organizationId, body.baseUrl, body.apiKey);
             const saved = await getOrganizationGatewayConfig(request, body.organizationId);
             return Response.json({ ok: true, gatewayConfigured: hasGatewayConfig(saved), gatewayBaseUrl: saved?.baseUrl || null });
           }
 
-          if (!body.instanceName) {
-            return Response.json({ error: "instanceName é obrigatório" }, { status: 400 });
+          if (typeof body.instanceName !== "string" || !body.instanceName.trim() || body.instanceName.length > 100) {
+            return Response.json({ error: "instanceName inválido" }, { status: 400 });
           }
 
           const gatewayConfig = await getOrganizationGatewayConfig(request, body.organizationId);
