@@ -115,42 +115,6 @@ async function removeReservedAccount(request: Request, organizationId: string, i
   );
 }
 
-async function saveAccount(request: Request, organizationId: string, instanceName: string, status: string) {
-  const { url, headers } = getSupabaseConfig(request);
-  const existingResponse = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}&select=id&limit=1`, { headers });
-  const existing = existingResponse.ok ? await existingResponse.json() as { id: string }[] : [];
-  const payload = {
-    organization_id: organizationId,
-    internal_name: instanceName,
-    provider: "evolution_baileys",
-    session_id: instanceName,
-    status,
-    connection_status: status,
-    session_status: status,
-    reconnect_required: false,
-    is_enabled: true,
-    last_seen_at: new Date().toISOString(),
-  };
-
-  if (existing[0]) {
-    const response = await fetch(`${url}/rest/v1/whatsapp_accounts?id=eq.${existing[0].id}`, {
-      method: "PATCH",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) throw new Error(`Falha ao atualizar sessão no banco: ${await response.text()}`);
-    return (await response.json() as unknown[])[0];
-  }
-
-  const response = await fetch(`${url}/rest/v1/whatsapp_accounts`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error(`Falha ao registrar sessão no banco: ${await response.text()}`);
-  return (await response.json() as unknown[])[0];
-}
-
 async function patchAccount(request: Request, organizationId: string, instanceName: string, patch: Record<string, unknown>) {
   const { url, headers } = getSupabaseConfig(request);
   const response = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}`, {
