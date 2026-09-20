@@ -276,6 +276,7 @@ async function workerGatewayConfig(organizationId: string, workerSecret: string)
 
 async function finishJob(
   job: ServiceJob,
+  workerId: string,
   workerSecret: string,
   input: {
     success: boolean;
@@ -291,6 +292,7 @@ async function finishJob(
       headers: workerHeaders(),
       body: JSON.stringify({
         p_job_id: job.id,
+        p_worker_id: workerId,
         p_success: input.success,
         p_provider_message_id: input.providerMessageId || null,
         p_error: input.error || null,
@@ -300,6 +302,10 @@ async function finishJob(
     },
   );
   if (!response.ok) throw new Error(`Falha ao finalizar job: ${await response.text()}`);
+  const finalized = Boolean(await response.json());
+  if (!finalized) {
+    throw new Error("Job não pôde ser finalizado porque o lock não pertence mais a este worker");
+  }
 }
 
 export async function runQueueWorker(workerId: string, limit = 20, workerSecret?: string) {
@@ -347,7 +353,7 @@ export async function runQueueWorker(workerId: string, limit = 20, workerSecret?
         job.message,
         gatewayConfig,
       ) as any;
-      await finishJob(job, workerSecret, {
+      await finishJob(job, workerId, workerSecret, {
         success: true,
         providerMessageId: provider?.key?.id || provider?.messageId || null,
       });
@@ -358,7 +364,7 @@ export async function runQueueWorker(workerId: string, limit = 20, workerSecret?
         1800,
         Math.pow(2, Math.max(1, job.attempts)) * 30,
       );
-      await finishJob(job, workerSecret, {
+      await finishJob(job, workerId, workerSecret, {
         success: false,
         error: error instanceof Error ? error.message.slice(0, 2000) : "Falha inesperada",
         retryAt: final
