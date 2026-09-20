@@ -18,6 +18,10 @@ function environmentGatewayConfig(): EvolutionConfig | null {
   return baseUrl && apiKey ? { baseUrl, apiKey } : null;
 }
 
+function evolutionNotFound(error: unknown) {
+  return error instanceof Error && /Evolution API 404\b/.test(error.message);
+}
+
 async function getOrganizationGatewayConfig(request: Request, organizationId: string): Promise<EvolutionConfig | null> {
   const { url, headers } = getSupabaseConfig(request);
   const response = await fetch(`${url}/rest/v1/rpc/get_evolution_gateway_config`, {
@@ -255,14 +259,34 @@ export const Route = createFileRoute("/api/gateway")({
               }
               break;
             }
-            case "qr":
-              result = await getQr(safeName, gatewayConfig);
+            case "qr": {
+              try {
+                result = await getQr(safeName, gatewayConfig);
+              } catch (error) {
+                if (!evolutionNotFound(error)) throw error;
+
+                const origin = new URL(request.url).origin;
+                const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
+                result = await createInstance(
+                  safeName,
+                  `${origin}/api/gateway-webhook`,
+                  gatewayConfig,
+                  {
+                    "x-zapflow-organization-id": body.organizationId,
+                    "x-zapflow-webhook-secret": webhookSecret,
+                  },
+                );
+              }
+
               await patchAccount(request, body.organizationId, safeName, {
+                status: "CONNECTING",
                 session_status: "WAITING_QR",
                 connection_status: "WAITING_QR",
+                reconnect_required: false,
                 qr_expires_at: new Date(Date.now() + 60_000).toISOString(),
               });
               break;
+            }
             case "status": {
               result = await getConnectionState(safeName, gatewayConfig);
               const rawState = String(result.status || "").toUpperCase();
@@ -290,7 +314,12 @@ export const Route = createFileRoute("/api/gateway")({
               });
               break;
             case "delete": {
-              result = await deleteInstance(safeName, gatewayConfig);
+              try {
+                result = await deleteInstance(safeName, gatewayConfig);
+              } catch (error) {
+                if (!evolutionNotFound(error)) throw error;
+                result = { instanceName: safeName, status: "already_missing" };
+              }
               const { url, headers } = getSupabaseConfig(request);
               const deleteResponse = await fetch(`${url}/rest/v1/rpc/zapflow_delete_whatsapp_account`, {
                 method: "POST",
