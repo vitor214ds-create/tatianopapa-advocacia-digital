@@ -41,7 +41,7 @@ export const Route = createFileRoute("/api/campaigns")({
           await authorizeOrganization(request, organizationId);
           const { url, headers } = config(request);
           const select = encodeURIComponent(
-            "id,name,status,total_recipients,eligible_recipients,rejected_recipients,sent_count,failed_count,started_at,completed_at,created_at,updated_at",
+            "id,name,status,total_recipients,eligible_recipients,rejected_recipients,sent_count,failed_count,canceled_count,started_at,completed_at,created_at,updated_at",
           );
           const response = await fetch(
             `${url}/rest/v1/zapflow_campaigns?organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&order=created_at.desc&limit=100`,
