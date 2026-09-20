@@ -3,7 +3,6 @@ import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
 
 const ACCESS_COOKIE = "zapflow_access_token";
 const REFRESH_COOKIE = "zapflow_refresh_token";
-const PRIMARY_ORGANIZATION_ID = "c3b3518d-4565-415f-99f1-a1f3c8f0487a";
 
 type Membership = { organization_id: string; role: string };
 type SessionPayload = { access_token: string; refresh_token: string; expires_in?: number };
@@ -36,9 +35,7 @@ function clearCookie(name: string) {
 }
 
 function activeOrganizationId(memberships: Membership[]) {
-  return memberships.find(item => item.organization_id === PRIMARY_ORGANIZATION_ID)?.organization_id
-    ?? memberships[0]?.organization_id
-    ?? null;
+  return memberships[0]?.organization_id ?? null;
 }
 
 async function getProfile(accessToken: string) {
