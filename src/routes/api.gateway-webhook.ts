@@ -7,10 +7,19 @@ export const Route = createFileRoute("/api/gateway-webhook")({
       POST: async ({ request }) => {
         try {
           const requestUrl = new URL(request.url);
-          const organizationId = requestUrl.searchParams.get("organizationId");
-          const secret = requestUrl.searchParams.get("secret");
+          const organizationId =
+            request.headers.get("x-zapflow-organization-id") ||
+            requestUrl.searchParams.get("organizationId");
+          const secret =
+            request.headers.get("x-zapflow-webhook-secret") ||
+            requestUrl.searchParams.get("secret");
           if (!organizationId || !secret || secret.length < 32) {
             return new Response("Unauthorized", { status: 401 });
+          }
+
+          const contentLength = Number(request.headers.get("content-length") || "0");
+          if (Number.isFinite(contentLength) && contentLength > 1_000_000) {
+            return Response.json({ error: "Payload muito grande" }, { status: 413 });
           }
 
           const payload = await request.json().catch(() => null) as Record<string, any> | null;
