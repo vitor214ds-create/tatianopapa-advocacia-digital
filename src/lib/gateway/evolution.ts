@@ -14,7 +14,7 @@ export type GatewayInstance = {
 
 const DEFAULT_RAILWAY_EVOLUTION_URL = "http://evolution-api.railway.internal:8080";
 
-function normalizeBaseUrl(value?: string | null) {
+export function normalizeEvolutionBaseUrl(value?: string | null) {
   let raw = String(value || "").trim().replace(/\/$/, "");
   if (!raw) return null;
 
@@ -34,29 +34,57 @@ function normalizeBaseUrl(value?: string | null) {
     return DEFAULT_RAILWAY_EVOLUTION_URL;
   }
 
-  if (!/^https?:\/\//i.test(raw)) raw = `http://${raw}`;
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
 
   try {
     const url = new URL(raw);
-    if (url.hostname.endsWith(".railway.internal") && !url.port) {
-      url.port = "8080";
+    const host = url.hostname.toLowerCase();
+
+    if (url.username || url.password || url.search || url.hash) return null;
+
+    const railwayPrivate = host.endsWith(".railway.internal");
+    if (railwayPrivate) {
+      if (url.protocol !== "http:") return null;
+      if (!url.port) url.port = "8080";
+      return url.origin;
     }
-    return url.toString().replace(/\/$/, "");
+
+    if (url.protocol !== "https:") return null;
+    if (url.pathname !== "/" && url.pathname !== "") return null;
+
+    if (
+      host === "localhost" ||
+      host === "::1" ||
+      host === "[::1]" ||
+      host === "0.0.0.0" ||
+      host.endsWith(".localhost") ||
+      host === "metadata.google.internal" ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      /^(fc|fd|fe8|fe9|fea|feb)[0-9a-f:]*$/i.test(host)
+    ) {
+      return null;
+    }
+
+    return url.origin;
   } catch {
     return null;
   }
 }
 
 export function hasGatewayConfig(config?: EvolutionConfig | null) {
-  if (normalizeBaseUrl(config?.baseUrl) && config?.apiKey) return true;
+  if (normalizeEvolutionBaseUrl(config?.baseUrl) && config?.apiKey) return true;
   return Boolean(
-    normalizeBaseUrl(runtimeEnv("EVOLUTION_API_URL")) &&
+    normalizeEvolutionBaseUrl(runtimeEnv("EVOLUTION_API_URL")) &&
       runtimeEnv("EVOLUTION_API_KEY"),
   );
 }
 
 function getConfig(config?: EvolutionConfig | null): EvolutionConfig {
-  const baseUrl = normalizeBaseUrl(config?.baseUrl || runtimeEnv("EVOLUTION_API_URL"));
+  const baseUrl = normalizeEvolutionBaseUrl(config?.baseUrl || runtimeEnv("EVOLUTION_API_URL"));
   const apiKey = config?.apiKey || runtimeEnv("EVOLUTION_API_KEY");
   if (!baseUrl || !apiKey) {
     throw new Error("Gateway Evolution ainda não configurado.");
@@ -72,6 +100,7 @@ async function evolutionFetch(
   const { baseUrl, apiKey } = getConfig(config);
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
+    signal: init?.signal ?? AbortSignal.timeout(20_000),
     headers: {
       "Content-Type": "application/json",
       apikey: apiKey,
@@ -100,6 +129,7 @@ export async function createInstance(
   instanceName: string,
   webhookUrl?: string,
   config?: EvolutionConfig | null,
+  webhookHeaders?: Record<string, string>,
 ): Promise<GatewayInstance> {
   const body: Record<string, unknown> = {
     instanceName,
@@ -112,6 +142,7 @@ export async function createInstance(
       url: webhookUrl,
       byEvents: false,
       base64: false,
+      headers: webhookHeaders,
       events: ["CONNECTION_UPDATE", "MESSAGES_UPSERT", "MESSAGES_UPDATE"],
     };
   }
