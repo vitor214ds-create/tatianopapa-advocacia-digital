@@ -60,12 +60,21 @@ export const Route = createFileRoute("/api/campaigns")({
 
       POST: async ({ request }) => {
         try {
-          const body = await request.json() as {
+          const raw = await request.text();
+          if (raw.length > 3_000_000) {
+            return Response.json({ error: "Payload muito grande" }, { status: 413 });
+          }
+          let body: {
             organizationId?: string;
             name?: string;
             message?: string;
             recipients?: QueueRecipient[];
           };
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            return Response.json({ error: "JSON inválido" }, { status: 400 });
+          }
 
           if (
             !body.organizationId ||
@@ -91,6 +100,20 @@ export const Route = createFileRoute("/api/campaigns")({
               { error: "Cada campanha aceita no máximo 5.000 destinatários por criação" },
               { status: 400 },
             );
+          }
+
+          const invalidRecipient = body.recipients.some(recipient =>
+            !recipient ||
+            typeof recipient !== "object" ||
+            typeof recipient.phone !== "string" ||
+            recipient.phone.length > 64 ||
+            typeof recipient.consent !== "boolean" ||
+            (recipient.suppressed !== undefined && typeof recipient.suppressed !== "boolean") ||
+            (recipient.name !== undefined && (typeof recipient.name !== "string" || recipient.name.length > 200)) ||
+            (recipient.id !== undefined && (typeof recipient.id !== "string" || recipient.id.length > 120))
+          );
+          if (invalidRecipient) {
+            return Response.json({ error: "Lista de destinatários inválida" }, { status: 400 });
           }
 
           const user = await authorizeOrganization(request, body.organizationId);
