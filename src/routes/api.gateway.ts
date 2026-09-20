@@ -87,17 +87,20 @@ async function getOrganizationGatewayConfig(request: Request, organizationId: st
     body: JSON.stringify({ p_organization_id: organizationId }),
   });
 
-  if (response.ok) {
-    const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
-    const row = rows[0];
-    const normalizedUrl = normalizeEvolutionBaseUrl(row?.base_url);
-    if (normalizedUrl && row?.api_key) {
-      return { baseUrl: normalizedUrl, apiKey: row.api_key };
-    }
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error("Falha ao carregar gateway da organização", response.status, detail);
+    throw new Error("Não foi possível carregar a configuração da Evolution");
   }
 
-  // Railway can inject these from the Evolution service through Reference Variables.
-  // Vault remains preferred when an organization-specific config exists.
+  const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
+  const row = rows[0];
+  const normalizedUrl = normalizeEvolutionBaseUrl(row?.base_url);
+  if (normalizedUrl && row?.api_key) {
+    return { baseUrl: normalizedUrl, apiKey: row.api_key };
+  }
+
+  // Sem configuração específica no Vault, usa a configuração global do Railway.
   return environmentGatewayConfig();
 }
 
