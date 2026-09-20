@@ -6,7 +6,7 @@ type Props = { organizationId: string; onConnectedCountChange?: (count: number) 
 type ModalState = { instanceName: string; qr: string | null; loading: boolean; error: string | null } | null;
 const MAX_SESSIONS = 10;
 function normalizedState(account: WhatsAppAccount) { return String(account.connection_status || account.session_status || account.status || "DISCONNECTED").toUpperCase(); }
-function isConnected(account: WhatsAppAccount) { const state = normalizedState(account); return state.includes("CONNECTED") || state === "OPEN"; }
+function isConnected(account: WhatsAppAccount) { const state = normalizedState(account); return state === "CONNECTED" || state === "OPEN"; }
 function isWaiting(account: WhatsAppAccount) { const state = normalizedState(account); return state.includes("WAITING") || state.includes("CONNECTING"); }
 function slotName(index: number) { return `WhatsApp ${String(index + 1).padStart(2, "0")}`; }
 
@@ -76,7 +76,7 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
         const response = await gatewayAction(organizationId, "status", instanceName);
         const state = String(response?.result?.status || "").toUpperCase();
         await refresh();
-        if (state.includes("OPEN") || state.includes("CONNECTED")) {
+        if (state === "OPEN" || state === "CONNECTED") {
           if (pollRef.current) window.clearInterval(pollRef.current);
           pollRef.current = null;
           setModal(null);
@@ -97,7 +97,14 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange 
     finally { setBusy(null); }
   }
 
-  const slots = Array.from({ length: MAX_SESSIONS }, (_, index) => ({ index, account: accounts[index] || null }));
+  const accountsBySession = useMemo(
+    () => new Map(accounts.map(account => [account.session_id, account])),
+    [accounts],
+  );
+  const slots = Array.from({ length: MAX_SESSIONS }, (_, index) => {
+    const sessionId = `zapflow-${organizationId.slice(0, 8)}-${String(index + 1).padStart(2, "0")}`;
+    return { index, account: accountsBySession.get(sessionId) || null };
+  });
 
   return <>
     <div className="page-heading"><div><span className="eyebrow">Sessões reais</span><h1>Números WhatsApp</h1><p>Conecte e gerencie até 10 números independentes. O QR é gerado pela Evolution API hospedada.</p></div><button className="btn btn-soft" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? "animate-spin" : ""}/>Atualizar</button></div>
