@@ -84,6 +84,37 @@ async function listAccounts(request: Request, organizationId: string) {
   return await response.json() as any[];
 }
 
+async function reserveAccount(request: Request, organizationId: string, instanceName: string) {
+  const { url, headers } = getSupabaseConfig(request);
+  const response = await fetch(`${url}/rest/v1/rpc/zapflow_reserve_whatsapp_account`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      p_organization_id: organizationId,
+      p_session_id: instanceName,
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    if (detail.includes("whatsapp account limit reached")) {
+      throw new Response("Limite de 10 sessões WhatsApp por organização atingido", { status: 409 });
+    }
+    console.error("Falha ao reservar sessão WhatsApp", response.status, detail);
+    throw new Error("Não foi possível reservar a sessão WhatsApp");
+  }
+  const rows = await response.json() as Array<{ account_id: string; is_new: boolean }>;
+  if (!rows[0]?.account_id) throw new Error("Reserva de sessão não retornou ID");
+  return rows[0];
+}
+
+async function removeReservedAccount(request: Request, organizationId: string, instanceName: string) {
+  const { url, headers } = getSupabaseConfig(request);
+  await fetch(
+    `${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}`,
+    { method: "DELETE", headers },
+  );
+}
+
 async function saveAccount(request: Request, organizationId: string, instanceName: string, status: string) {
   const { url, headers } = getSupabaseConfig(request);
   const existingResponse = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}&select=id&limit=1`, { headers });
@@ -204,22 +235,34 @@ export const Route = createFileRoute("/api/gateway")({
 
           switch (body.action) {
             case "create": {
-              const exists = Boolean(ownedAccount);
-              if (!exists && accounts.length >= 10) {
-                return Response.json({ error: "Limite de 10 sessões WhatsApp por organização atingido" }, { status: 409 });
+              const reservation = await reserveAccount(request, body.organizationId, safeName);
+              if (!reservation.is_new) {
+                return Response.json({ error: "Esta sessão já está registrada" }, { status: 409 });
               }
-              const origin = new URL(request.url).origin;
-              const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
-              result = await createInstance(
-                safeName,
-                `${origin}/api/gateway-webhook`,
-                gatewayConfig,
-                {
-                  "x-zapflow-organization-id": body.organizationId,
-                  "x-zapflow-webhook-secret": webhookSecret,
-                },
-              );
-              account = await saveAccount(request, body.organizationId, safeName, "CONNECTING");
+
+              try {
+                const origin = new URL(request.url).origin;
+                const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
+                result = await createInstance(
+                  safeName,
+                  `${origin}/api/gateway-webhook`,
+                  gatewayConfig,
+                  {
+                    "x-zapflow-organization-id": body.organizationId,
+                    "x-zapflow-webhook-secret": webhookSecret,
+                  },
+                );
+                await patchAccount(request, body.organizationId, safeName, {
+                  status: "CONNECTING",
+                  session_status: "CONNECTING",
+                  connection_status: "CONNECTING",
+                  reconnect_required: false,
+                });
+                account = { id: reservation.account_id, session_id: safeName };
+              } catch (error) {
+                await removeReservedAccount(request, body.organizationId, safeName);
+                throw error;
+              }
               break;
             }
             case "qr":
