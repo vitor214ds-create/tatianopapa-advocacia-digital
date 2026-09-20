@@ -104,7 +104,7 @@ export const Route = createFileRoute("/api/auth")({
 
           const organizationId = activeOrganizationId(profile.memberships);
           if (!organizationId) {
-            return Response.json({ error: "Usuário sem organização vinculada" }, { status: 403 });
+            return noStore(Response.json({ error: "Usuário sem organização vinculada" }, { status: 403 }));
           }
 
           const response = Response.json({
@@ -127,11 +127,15 @@ export const Route = createFileRoute("/api/auth")({
       },
 
       POST: async ({ request }) => {
-        const body = await request.json() as {
+        const body = await request.json().catch(() => null) as {
           action?: "login" | "logout";
           email?: string;
           password?: string;
-        };
+        } | null;
+
+        if (!body) {
+          return noStore(Response.json({ error: "JSON inválido" }, { status: 400 }));
+        }
 
         if (body.action === "logout") {
           const cookies = parseCookies(request);
@@ -154,7 +158,7 @@ export const Route = createFileRoute("/api/auth")({
         }
 
         if (body.action !== "login" || !body.email || !body.password) {
-          return Response.json({ error: "E-mail e senha são obrigatórios" }, { status: 400 });
+          return noStore(Response.json({ error: "E-mail e senha são obrigatórios" }, { status: 400 }));
         }
 
         try {
@@ -170,14 +174,14 @@ export const Route = createFileRoute("/api/auth")({
 
           if (!loginResponse.ok) {
             console.error("Supabase password login failed", loginResponse.status, await loginResponse.text());
-            return Response.json({ error: "E-mail ou senha inválidos" }, { status: 401 });
+            return noStore(Response.json({ error: "E-mail ou senha inválidos" }, { status: 401 }));
           }
 
           const session = await loginResponse.json() as SessionPayload;
           const profile = await getProfile(session.access_token);
 
           if (!profile) {
-            return Response.json({ error: "Não foi possível carregar o usuário" }, { status: 401 });
+            return noStore(Response.json({ error: "Não foi possível carregar o usuário" }, { status: 401 }));
           }
 
           const organizationId = activeOrganizationId(profile.memberships);
@@ -196,7 +200,7 @@ export const Route = createFileRoute("/api/auth")({
           return noStore(response);
         } catch (error) {
           console.error("Auth POST failed", error);
-          return Response.json({ error: "Falha na configuração de autenticação" }, { status: 500 });
+          return noStore(Response.json({ error: "Falha na configuração de autenticação" }, { status: 500 }));
         }
       },
     },
