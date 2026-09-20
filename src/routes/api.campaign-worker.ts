@@ -34,7 +34,6 @@ async function execute(request: Request) {
 export const Route = createFileRoute("/api/campaign-worker")({
   server: {
     handlers: {
-      GET: ({ request }) => execute(request),
       POST: ({ request }) => execute(request),
     },
   },
