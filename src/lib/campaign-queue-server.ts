@@ -106,6 +106,39 @@ export function prepareRecipients(recipients: QueueRecipient[]) {
   return { eligible: [...unique.values()], rejected };
 }
 
+async function filterPersistentSuppressions(
+  request: Request,
+  organizationId: string,
+  recipients: Array<QueueRecipient & { normalizedPhone: string }>,
+) {
+  if (!recipients.length) return { eligible: recipients, rejected: 0 };
+
+  const response = await fetch(
+    `${supabaseUrl()}/rest/v1/rpc/zapflow_get_suppressed_phones`,
+    {
+      method: "POST",
+      headers: userHeaders(request),
+      body: JSON.stringify({
+        p_organization_id: organizationId,
+        p_phones: recipients.map(item => item.normalizedPhone),
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error("Falha ao consultar supressões persistentes", response.status, detail);
+    throw new Error("Não foi possível validar a lista de supressão");
+  }
+
+  const rows = await response.json() as Array<{ phone: string }>;
+  const suppressed = new Set(rows.map(row => row.phone));
+  return {
+    eligible: recipients.filter(item => !suppressed.has(item.normalizedPhone)),
+    rejected: recipients.filter(item => suppressed.has(item.normalizedPhone)).length,
+  };
+}
+
 export function allocateEvenly<T extends { normalizedPhone: string }>(
   recipients: T[],
   sessions: ActiveSession[],
@@ -139,7 +172,14 @@ export async function createQueuedCampaign(
     recipients: QueueRecipient[];
   },
 ) {
-  const { eligible, rejected } = prepareRecipients(input.recipients);
+  const prepared = prepareRecipients(input.recipients);
+  const persistent = await filterPersistentSuppressions(
+    request,
+    input.organizationId,
+    prepared.eligible,
+  );
+  const eligible = persistent.eligible;
+  const rejected = prepared.rejected + persistent.rejected;
   if (!eligible.length) throw new Error("Nenhum destinatário elegível para a campanha");
 
   const sessions = await loadActiveSessions(request, input.organizationId);
