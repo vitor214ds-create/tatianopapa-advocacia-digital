@@ -34,6 +34,12 @@ function clearCookie(name: string) {
   return `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProduction() ? "; Secure" : ""}`;
 }
 
+function noStore(response: Response) {
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  return response;
+}
+
 function activeOrganizationId(memberships: Membership[]) {
   return memberships[0]?.organization_id ?? null;
 }
@@ -93,7 +99,7 @@ export const Route = createFileRoute("/api/auth")({
           }
 
           if (!profile) {
-            return Response.json({ authenticated: false }, { status: 401 });
+            return noStore(Response.json({ authenticated: false }, { status: 401 }));
           }
 
           const organizationId = activeOrganizationId(profile.memberships);
@@ -113,10 +119,10 @@ export const Route = createFileRoute("/api/auth")({
             response.headers.append("Set-Cookie", cookie(REFRESH_COOKIE, refreshed.refresh_token, 60 * 60 * 24 * 30));
           }
 
-          return response;
+          return noStore(response);
         } catch (error) {
           console.error("Auth GET failed", error);
-          return Response.json({ authenticated: false }, { status: 401 });
+          return noStore(Response.json({ authenticated: false }, { status: 401 }));
         }
       },
 
@@ -128,10 +134,23 @@ export const Route = createFileRoute("/api/auth")({
         };
 
         if (body.action === "logout") {
+          const cookies = parseCookies(request);
+          const accessToken = cookies[ACCESS_COOKIE];
+          if (accessToken) {
+            try {
+              const { url, key } = supabasePublicConfig();
+              await fetch(`${url}/auth/v1/logout`, {
+                method: "POST",
+                headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
+              });
+            } catch (error) {
+              console.error("Supabase logout failed", error);
+            }
+          }
           const response = Response.json({ ok: true });
           response.headers.append("Set-Cookie", clearCookie(ACCESS_COOKIE));
           response.headers.append("Set-Cookie", clearCookie(REFRESH_COOKIE));
-          return response;
+          return noStore(response);
         }
 
         if (body.action !== "login" || !body.email || !body.password) {
@@ -174,7 +193,7 @@ export const Route = createFileRoute("/api/auth")({
           });
           response.headers.append("Set-Cookie", cookie(ACCESS_COOKIE, session.access_token, session.expires_in || 3600));
           response.headers.append("Set-Cookie", cookie(REFRESH_COOKIE, session.refresh_token, 60 * 60 * 24 * 30));
-          return response;
+          return noStore(response);
         } catch (error) {
           console.error("Auth POST failed", error);
           return Response.json({ error: "Falha na configuração de autenticação" }, { status: 500 });
