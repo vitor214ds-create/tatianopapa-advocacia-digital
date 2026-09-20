@@ -101,6 +101,23 @@ async function getOrganizationGatewayConfig(request: Request, organizationId: st
   return environmentGatewayConfig();
 }
 
+async function getOrganizationWebhookSecret(request: Request, organizationId: string) {
+  const { url, headers } = getSupabaseConfig(request);
+  const response = await fetch(`${url}/rest/v1/rpc/get_or_create_evolution_webhook_secret`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ p_organization_id: organizationId }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error("Falha ao obter segredo de webhook Evolution", response.status, detail);
+    throw new Error("Não foi possível preparar o webhook da Evolution");
+  }
+  const secret = await response.json() as string;
+  if (!secret) throw new Error("Webhook da Evolution não retornou segredo");
+  return secret;
+}
+
 async function saveOrganizationGatewayConfig(request: Request, organizationId: string, baseUrl: string, apiKey: string) {
   const normalizedUrl = normalizeEvolutionBaseUrl(baseUrl);
   if (!normalizedUrl) throw new Error("URL da Evolution inválida");
@@ -250,10 +267,10 @@ export const Route = createFileRoute("/api/gateway")({
                 return Response.json({ error: "Limite de 10 sessões WhatsApp por organização atingido" }, { status: 409 });
               }
               const origin = new URL(request.url).origin;
-              const webhookSecret = runtimeEnv("GATEWAY_WEBHOOK_SECRET");
+              const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
               result = await createInstance(
                 safeName,
-                webhookSecret ? `${origin}/api/gateway-webhook?secret=${encodeURIComponent(webhookSecret)}` : undefined,
+                `${origin}/api/gateway-webhook?secret=${encodeURIComponent(webhookSecret)}`,
                 gatewayConfig,
               );
               account = await saveAccount(request, body.organizationId, safeName, "CONNECTING");
