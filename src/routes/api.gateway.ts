@@ -240,6 +240,7 @@ export const Route = createFileRoute("/api/gateway")({
                 return Response.json({ error: "Esta sessão já está registrada" }, { status: 409 });
               }
 
+              let remoteCreated = false;
               try {
                 const origin = new URL(request.url).origin;
                 const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
@@ -252,6 +253,7 @@ export const Route = createFileRoute("/api/gateway")({
                     "x-zapflow-webhook-secret": webhookSecret,
                   },
                 );
+                remoteCreated = true;
                 await patchAccount(request, body.organizationId, safeName, {
                   status: "CONNECTING",
                   session_status: "CONNECTING",
@@ -260,7 +262,11 @@ export const Route = createFileRoute("/api/gateway")({
                 });
                 account = { id: reservation.account_id, session_id: safeName };
               } catch (error) {
-                await removeReservedAccount(request, body.organizationId, safeName);
+                if (!remoteCreated) {
+                  await removeReservedAccount(request, body.organizationId, safeName);
+                } else {
+                  console.error("Instância criada na Evolution, mas persistência final falhou", safeName, error);
+                }
                 throw error;
               }
               break;
