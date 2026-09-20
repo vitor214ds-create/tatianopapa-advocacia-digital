@@ -270,7 +270,7 @@ export const Route = createFileRoute("/api/gateway")({
               const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
               result = await createInstance(
                 safeName,
-                `${origin}/api/gateway-webhook?secret=${encodeURIComponent(webhookSecret)}`,
+                `${origin}/api/gateway-webhook?organizationId=${encodeURIComponent(body.organizationId)}&secret=${encodeURIComponent(webhookSecret)}`,
                 gatewayConfig,
               );
               account = await saveAccount(request, body.organizationId, safeName, "CONNECTING");
