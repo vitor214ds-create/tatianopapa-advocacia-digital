@@ -6,8 +6,10 @@ export const Route = createFileRoute("/api/gateway-webhook")({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const secret = new URL(request.url).searchParams.get("secret");
-          if (!secret || secret.length < 32) {
+          const requestUrl = new URL(request.url);
+          const organizationId = requestUrl.searchParams.get("organizationId");
+          const secret = requestUrl.searchParams.get("secret");
+          if (!organizationId || !secret || secret.length < 32) {
             return new Response("Unauthorized", { status: 401 });
           }
 
@@ -33,6 +35,7 @@ export const Route = createFileRoute("/api/gateway-webhook")({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
+              p_organization_id: organizationId,
               p_secret: secret,
               p_instance_name: instanceName,
               p_event: event,
