@@ -7,71 +7,10 @@ import {
   getQr,
   hasGatewayConfig,
   logoutInstance,
+  normalizeEvolutionBaseUrl,
   type EvolutionConfig,
 } from "../lib/gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
-
-const DEFAULT_RAILWAY_EVOLUTION_URL = "http://evolution-api.railway.internal:8080";
-
-function cookieToken(request: Request) {
-  const header = request.headers.get("cookie") || "";
-  for (const part of header.split(";")) {
-    const value = part.trim();
-    const index = value.indexOf("=");
-    if (index !== -1 && value.slice(0, index) === "zapflow_access_token") {
-      return decodeURIComponent(value.slice(index + 1));
-    }
-  }
-  return null;
-}
-
-function getSupabaseConfig(request: Request) {
-  const { url, key } = supabasePublicConfig();
-  const header = request.headers.get("authorization");
-  const cookie = cookieToken(request);
-  const authorization = header?.startsWith("Bearer ") ? header : cookie ? `Bearer ${cookie}` : null;
-  if (!authorization) throw new Response("Não autenticado", { status: 401 });
-  return {
-    url,
-    headers: {
-      apikey: key,
-      Authorization: authorization,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-    },
-  };
-}
-
-function normalizeEvolutionBaseUrl(value?: string | null) {
-  let raw = String(value || "").trim().replace(/\/$/, "");
-  if (!raw) return null;
-
-  const ownPrivateDomain = String(runtimeEnv("RAILWAY_PRIVATE_DOMAIN") || "").trim().toLowerCase();
-  const hostOnly = raw.replace(/^https?:\/\//i, "").split("/")[0].toLowerCase();
-
-  // A common Railway misconfiguration is referencing the ZapFlow service's own
-  // RAILWAY_PRIVATE_DOMAIN instead of the Evolution service. Detect and repair it.
-  if (
-    (ownPrivateDomain && (hostOnly === ownPrivateDomain || hostOnly.startsWith(`${ownPrivateDomain}:`))) ||
-    hostOnly.startsWith("tatianopapa-advocacia-digital.railway.internal")
-  ) {
-    return DEFAULT_RAILWAY_EVOLUTION_URL;
-  }
-
-  if (!/^https?:\/\//i.test(raw)) raw = `http://${raw}`;
-
-  try {
-    const url = new URL(raw);
-    // Railway private DNS is plain HTTP inside the project network. Evolution
-    // listens on 8080 in the deployed container unless an explicit port exists.
-    if (url.hostname.endsWith(".railway.internal") && !url.port) {
-      url.port = "8080";
-    }
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    return null;
-  }
-}
 
 function environmentGatewayConfig(): EvolutionConfig | null {
   const baseUrl = normalizeEvolutionBaseUrl(runtimeEnv("EVOLUTION_API_URL"));
@@ -273,8 +212,12 @@ export const Route = createFileRoute("/api/gateway")({
               const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
               result = await createInstance(
                 safeName,
-                `${origin}/api/gateway-webhook?organizationId=${encodeURIComponent(body.organizationId)}&secret=${encodeURIComponent(webhookSecret)}`,
+                `${origin}/api/gateway-webhook`,
                 gatewayConfig,
+                {
+                  "x-zapflow-organization-id": body.organizationId,
+                  "x-zapflow-webhook-secret": webhookSecret,
+                },
               );
               account = await saveAccount(request, body.organizationId, safeName, "CONNECTING");
               break;
