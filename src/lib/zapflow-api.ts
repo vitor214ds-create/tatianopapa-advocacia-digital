@@ -30,6 +30,7 @@ export type Campaign = {
   rejected_recipients: number;
   sent_count: number;
   failed_count: number;
+  canceled_count?: number;
   started_at?: string | null;
   completed_at?: string | null;
   created_at: string;
