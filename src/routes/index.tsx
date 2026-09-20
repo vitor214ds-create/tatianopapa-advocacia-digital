@@ -93,7 +93,7 @@ function CampaignsPage({ accounts, organizationId }: { accounts:WhatsAppAccount[
     setSaving(true);
     try{
       const result=await createCampaign({organizationId,name:name.trim(),message:message.trim(),recipients});
-      setSuccess(\`Campanha criada: \${result.eligible} destinatários elegíveis, \${result.rejected} rejeitados, distribuídos entre \${result.sessions} sessão(ões).\`);
+      setSuccess(`Campanha criada: ${result.eligible} destinatários elegíveis, ${result.rejected} rejeitados, distribuídos entre ${result.sessions} sessão(ões).`);
       setCreating(false); setName(""); setMessage(""); setRecipientText(""); setConsentConfirmed(false);
       await refreshCampaigns();
     }catch(err){setError(err instanceof Error?err.message:"Não foi possível criar a campanha.");}
