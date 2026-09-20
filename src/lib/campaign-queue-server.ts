@@ -17,6 +17,7 @@ type ActiveSession = {
 
 type ServiceJob = {
   id: string;
+  organization_id: string;
   campaign_id: string;
   session_id: string;
   phone: string;
@@ -202,6 +203,37 @@ export async function createQueuedCampaign(
   };
 }
 
+async function workerGatewayConfig(organizationId: string, workerSecret: string) {
+  const response = await fetch(
+    `${supabaseUrl()}/rest/v1/rpc/zapflow_get_gateway_config_for_worker`,
+    {
+      method: "POST",
+      headers: workerHeaders(),
+      body: JSON.stringify({
+        p_organization_id: organizationId,
+        p_secret: workerSecret,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = await response.text();
+    if (response.status === 401 || response.status === 403 || detail.includes("unauthorized")) {
+      throw new Error("Worker não autorizado");
+    }
+    console.error("Falha ao carregar gateway da organização", response.status, detail);
+    throw new Error("Não foi possível carregar a configuração da Evolution");
+  }
+
+  const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
+  const row = rows[0];
+  if (row?.base_url && row?.api_key) {
+    return { baseUrl: row.base_url, apiKey: row.api_key };
+  }
+
+  return null;
+}
+
 async function finishJob(
   job: ServiceJob,
   workerSecret: string,
@@ -259,9 +291,22 @@ export async function runQueueWorker(workerId: string, limit = 20, workerSecret?
   let retried = 0;
   let failed = 0;
 
+  const gatewayCache = new Map<string, { baseUrl: string; apiKey: string } | null>();
+
   for (const job of jobs) {
     try {
-      const provider = await sendText(job.session_id, job.phone, job.message) as any;
+      let gatewayConfig = gatewayCache.get(job.organization_id);
+      if (gatewayConfig === undefined) {
+        gatewayConfig = await workerGatewayConfig(job.organization_id, workerSecret);
+        gatewayCache.set(job.organization_id, gatewayConfig);
+      }
+
+      const provider = await sendText(
+        job.session_id,
+        job.phone,
+        job.message,
+        gatewayConfig,
+      ) as any;
       await finishJob(job, workerSecret, {
         success: true,
         providerMessageId: provider?.key?.id || provider?.messageId || null,
