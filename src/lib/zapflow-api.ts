@@ -37,6 +37,13 @@ export type Campaign = {
   updated_at: string;
 };
 
+export type DashboardMetrics = {
+  sent24h: number;
+  failed24h: number;
+  pending: number;
+  replies24h: number;
+};
+
 export type MessageTemplate = {
   id: string;
   name: string;
@@ -104,6 +111,12 @@ export async function gatewayAction(organizationId: string, action: "create" | "
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ organizationId, action, instanceName }),
   }));
+}
+
+export async function getDashboardMetrics(organizationId: string) {
+  return json<{ ok: true; metrics: DashboardMetrics }>(
+    await protectedFetch(`/api/dashboard?organizationId=${encodeURIComponent(organizationId)}`),
+  );
 }
 
 export async function listCampaigns(organizationId: string) {
