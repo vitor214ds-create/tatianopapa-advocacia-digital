@@ -292,12 +292,22 @@ export const Route = createFileRoute("/api/gateway")({
             case "delete": {
               result = await deleteInstance(safeName, gatewayConfig);
               const { url, headers } = getSupabaseConfig(request);
-              const deleteResponse = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(body.organizationId)}&session_id=eq.${encodeURIComponent(safeName)}`, {
-                method: "DELETE",
+              const deleteResponse = await fetch(`${url}/rest/v1/rpc/zapflow_delete_whatsapp_account`, {
+                method: "POST",
                 headers,
+                body: JSON.stringify({
+                  p_organization_id: body.organizationId,
+                  p_account_id: ownedAccount.id,
+                }),
               });
               if (!deleteResponse.ok) {
-                throw new Error(`Falha ao remover sessão do banco: ${await deleteResponse.text()}`);
+                const detail = await deleteResponse.text();
+                console.error("Falha ao remover sessão do banco", deleteResponse.status, detail);
+                throw new Error("A sessão foi removida da Evolution, mas não foi possível concluir a limpeza no banco");
+              }
+              const deleted = Boolean(await deleteResponse.json());
+              if (!deleted) {
+                throw new Error("Sessão não encontrada para exclusão no banco");
               }
               break;
             }
