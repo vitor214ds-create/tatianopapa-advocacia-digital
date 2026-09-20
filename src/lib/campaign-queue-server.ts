@@ -147,62 +147,45 @@ export async function createQueuedCampaign(
   const allocations = allocateEvenly(eligible, sessions);
   const headers = userHeaders(request);
 
-  const campaignResponse = await fetch(`${supabaseUrl()}/rest/v1/zapflow_campaigns`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      organization_id: input.organizationId,
-      name: input.name,
-      message: input.message,
-      status: "QUEUED",
-      total_recipients: input.recipients.length,
-      eligible_recipients: eligible.length,
-      rejected_recipients: rejected,
-      created_by: input.createdBy,
-    }),
-  });
-
-  if (!campaignResponse.ok) {
-    throw new Error(`Falha ao criar campanha: ${await campaignResponse.text()}`);
-  }
-
-  const campaign = (await campaignResponse.json() as { id: string }[])[0];
-  if (!campaign?.id) throw new Error("Campanha não retornou ID");
-
   const gap = perSessionGapMs();
   const startedAt = Date.now();
 
   const jobs = allocations.map(({ recipient, session, sessionSequence }) => ({
-    organization_id: input.organizationId,
-    campaign_id: campaign.id,
     whatsapp_account_id: session.id,
     session_id: session.session_id,
     recipient_id: recipient.id || null,
     recipient_name: recipient.name || null,
     phone: recipient.normalizedPhone,
     message: input.message,
-    status: "QUEUED",
-    attempts: 0,
-    max_attempts: 3,
     next_attempt_at: new Date(startedAt + sessionSequence * gap).toISOString(),
+    max_attempts: 3,
   }));
 
-  for (let offset = 0; offset < jobs.length; offset += 500) {
-    const chunk = jobs.slice(offset, offset + 500);
-    const jobsResponse = await fetch(`${supabaseUrl()}/rest/v1/zapflow_message_jobs`, {
+  const atomicResponse = await fetch(
+    `${supabaseUrl()}/rest/v1/rpc/zapflow_create_campaign_with_jobs`,
+    {
       method: "POST",
       headers,
-      body: JSON.stringify(chunk),
-    });
+      body: JSON.stringify({
+        p_organization_id: input.organizationId,
+        p_name: input.name,
+        p_message: input.message,
+        p_total_recipients: input.recipients.length,
+        p_eligible_recipients: eligible.length,
+        p_rejected_recipients: rejected,
+        p_jobs: jobs,
+      }),
+    },
+  );
 
-    if (!jobsResponse.ok) {
-      await fetch(`${supabaseUrl()}/rest/v1/zapflow_campaigns?id=eq.${campaign.id}`, {
-        method: "DELETE",
-        headers,
-      });
-      throw new Error(`Falha ao criar jobs: ${await jobsResponse.text()}`);
-    }
+  if (!atomicResponse.ok) {
+    const detail = await atomicResponse.text();
+    console.error("Falha na criação atômica de campanha", detail);
+    throw new Error("Não foi possível criar a campanha e sua fila.");
   }
+
+  const campaignId = await atomicResponse.json() as string;
+  if (!campaignId) throw new Error("Campanha não retornou ID");
 
   const allocation = sessions.map(session => ({
     sessionId: session.session_id,
@@ -210,7 +193,7 @@ export async function createQueuedCampaign(
   }));
 
   return {
-    campaignId: campaign.id,
+    campaignId,
     eligible: eligible.length,
     rejected,
     sessions: sessions.length,
