@@ -248,3 +248,14 @@ using (exists(select 1 from public.organization_members om where om.organization
 drop policy if exists zapflow_session_events_members_read on public.whatsapp_session_events;
 create policy zapflow_session_events_members_read on public.whatsapp_session_events for select to authenticated
 using (exists(select 1 from public.organization_members om where om.organization_id=whatsapp_session_events.organization_id and om.user_id=(select auth.uid())));
+
+
+create index if not exists zapflow_campaigns_organization_idx
+  on public.zapflow_campaigns(organization_id);
+
+create index if not exists zapflow_message_jobs_organization_idx
+  on public.zapflow_message_jobs(organization_id);
+
+create index if not exists zapflow_message_jobs_whatsapp_account_idx
+  on public.zapflow_message_jobs(whatsapp_account_id)
+  where whatsapp_account_id is not null;
