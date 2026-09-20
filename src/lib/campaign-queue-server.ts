@@ -139,6 +139,26 @@ async function filterPersistentSuppressions(
   };
 }
 
+export function renderRecipientMessage(
+  template: string,
+  recipient: QueueRecipient & { normalizedPhone: string },
+) {
+  const rendered = template
+    .replace(/{{\s*nome\s*}}/gi, recipient.name?.trim() || "cliente")
+    .replace(/{{\s*telefone\s*}}/gi, recipient.normalizedPhone);
+
+  const unresolved = rendered.match(/{{\s*[a-zA-Z0-9_]+\s*}}/);
+  if (unresolved) {
+    throw new Error(`Variável de template não suportada: ${unresolved[0]}`);
+  }
+
+  if (!rendered.trim() || rendered.length > 4000) {
+    throw new Error("Mensagem personalizada inválida");
+  }
+
+  return rendered;
+}
+
 export function allocateEvenly<T extends { normalizedPhone: string }>(
   recipients: T[],
   sessions: ActiveSession[],
@@ -197,7 +217,7 @@ export async function createQueuedCampaign(
     recipient_id: recipient.id || null,
     recipient_name: recipient.name || null,
     phone: recipient.normalizedPhone,
-    message: input.message,
+    message: renderRecipientMessage(input.message, recipient),
     next_attempt_at: new Date(startedAt + sessionSequence * gap).toISOString(),
     max_attempts: 3,
   }));
