@@ -285,26 +285,44 @@ async function finishJob(
     retryAt?: string | null;
   },
 ) {
-  const response = await fetch(
-    `${supabaseUrl()}/rest/v1/rpc/zapflow_finish_message_job_secure`,
-    {
-      method: "POST",
-      headers: workerHeaders(),
-      body: JSON.stringify({
-        p_job_id: job.id,
-        p_worker_id: workerId,
-        p_success: input.success,
-        p_provider_message_id: input.providerMessageId || null,
-        p_error: input.error || null,
-        p_retry_at: input.retryAt || null,
-        p_secret: workerSecret,
-      }),
-    },
-  );
-  if (!response.ok) throw new Error(`Falha ao finalizar job: ${await response.text()}`);
-  const finalized = Boolean(await response.json());
-  if (!finalized) {
-    throw new Error("Job não pôde ser finalizado porque o lock não pertence mais a este worker");
+  const maxAttempts = input.success ? 2 : 1;
+  let lastError = "Falha ao finalizar job";
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(
+        `${supabaseUrl()}/rest/v1/rpc/zapflow_finish_message_job_secure`,
+        {
+          method: "POST",
+          headers: workerHeaders(),
+          body: JSON.stringify({
+            p_job_id: job.id,
+            p_worker_id: workerId,
+            p_success: input.success,
+            p_provider_message_id: input.providerMessageId || null,
+            p_error: input.error || null,
+            p_retry_at: input.retryAt || null,
+            p_secret: workerSecret,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+
+      if (!response.ok) {
+        lastError = `Falha ao finalizar job: ${await response.text()}`;
+        if (attempt < maxAttempts) continue;
+        throw new Error(lastError);
+      }
+
+      const finalized = Boolean(await response.json());
+      if (!finalized) {
+        throw new Error("Job não pôde ser finalizado porque o lock não pertence mais a este worker");
+      }
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Falha ao finalizar job";
+      if (attempt >= maxAttempts) throw new Error(lastError);
+    }
   }
 }
 
