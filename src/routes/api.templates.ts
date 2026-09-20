@@ -24,6 +24,8 @@ function headers(request: Request) {
   };
 }
 
+const ALLOWED_CATEGORIES = new Set(["general", "followup", "notification", "support"]);
+
 function cleanVariables(content: string) {
   const found = [...content.matchAll(/{{\s*([a-zA-Z0-9_]+)\s*}}/g)].map(match => match[1]);
   return [...new Set(found)];
@@ -75,7 +77,10 @@ export const Route = createFileRoute("/api/templates")({
               `${url}/rest/v1/zapflow_message_templates?id=eq.${encodeURIComponent(body.id)}&organization_id=eq.${encodeURIComponent(body.organizationId)}`,
               { method: "DELETE", headers: authHeaders },
             );
-            if (!response.ok) return Response.json({ error: await response.text() }, { status: response.status });
+            if (!response.ok) {
+              console.error("Falha ao excluir template", response.status, await response.text());
+              return Response.json({ error: "Não foi possível excluir o template" }, { status: response.status });
+            }
             return Response.json({ ok: true });
           }
 
@@ -87,13 +92,17 @@ export const Route = createFileRoute("/api/templates")({
           if (content.length < 1 || content.length > 4000) {
             return Response.json({ error: "A mensagem deve ter entre 1 e 4.000 caracteres" }, { status: 400 });
           }
-          const payload = {
+          const category = body.category?.trim() || "general";
+          if (!ALLOWED_CATEGORIES.has(category)) {
+            return Response.json({ error: "Categoria de template inválida" }, { status: 400 });
+          }
+
+          const commonPayload = {
             organization_id: body.organizationId,
             name,
             content,
             variables: cleanVariables(content),
-            category: body.category?.trim() || "general",
-            created_by: user.userId,
+            category,
             updated_at: new Date().toISOString(),
           };
 
@@ -101,23 +110,31 @@ export const Route = createFileRoute("/api/templates")({
             if (!body.id) return Response.json({ error: "id é obrigatório" }, { status: 400 });
             const response = await fetch(
               `${url}/rest/v1/zapflow_message_templates?id=eq.${encodeURIComponent(body.id)}&organization_id=eq.${encodeURIComponent(body.organizationId)}`,
-              { method: "PATCH", headers: authHeaders, body: JSON.stringify(payload) },
+              { method: "PATCH", headers: authHeaders, body: JSON.stringify(commonPayload) },
             );
-            if (!response.ok) return Response.json({ error: await response.text() }, { status: response.status });
+            if (!response.ok) {
+              const detail = await response.text();
+              console.error("Falha ao atualizar template", response.status, detail);
+              if (response.status === 409 || detail.includes("duplicate")) {
+                return Response.json({ error: "Já existe um template com esse nome" }, { status: 409 });
+              }
+              return Response.json({ error: "Não foi possível atualizar o template" }, { status: response.status });
+            }
             return Response.json({ ok: true, template: (await response.json())[0] });
           }
 
           const response = await fetch(`${url}/rest/v1/zapflow_message_templates`, {
             method: "POST",
             headers: authHeaders,
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ ...commonPayload, created_by: user.userId }),
           });
           if (!response.ok) {
             const detail = await response.text();
             if (response.status === 409 || detail.includes("duplicate")) {
               return Response.json({ error: "Já existe um template com esse nome" }, { status: 409 });
             }
-            return Response.json({ error: detail }, { status: response.status });
+            console.error("Falha ao criar template", response.status, detail);
+            return Response.json({ error: "Não foi possível criar o template" }, { status: response.status });
           }
           return Response.json({ ok: true, template: (await response.json())[0] });
         } catch (error) {
