@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Activity, AlertTriangle, BarChart3, Bell, CalendarClock, CheckCircle2, ChevronDown,
   CircleHelp, ContactRound, FileText, Gauge, Inbox, Layers3, ListFilter, Menu,
-  MessageCircle, MoreHorizontal, Plus, Search, Send, Settings, ShieldCheck,
+  MessageCircle, MoreHorizontal, Plus, RefreshCw, Search, Send, Settings, ShieldCheck,
   Smartphone, Sparkles, Users, WalletCards, Webhook, X, Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
