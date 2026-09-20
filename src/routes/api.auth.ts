@@ -6,6 +6,49 @@ const REFRESH_COOKIE = "zapflow_refresh_token";
 
 type Membership = { organization_id: string; role: string };
 type SessionPayload = { access_token: string; refresh_token: string; expires_in?: number };
+type LoginBucket = { count: number; resetAt: number };
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __zapflowLoginBuckets: Map<string, LoginBucket> | undefined;
+}
+
+function loginBuckets() {
+  return globalThis.__zapflowLoginBuckets ??= new Map<string, LoginBucket>();
+}
+
+function clientIp(request: Request) {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || request.headers.get("x-real-ip") || "unknown";
+}
+
+function consumeLoginBucket(key: string, limit: number, windowMs: number) {
+  const now = Date.now();
+  const buckets = loginBuckets();
+
+  if (buckets.size > 5000) {
+    for (const [bucketKey, bucket] of buckets) {
+      if (bucket.resetAt <= now) buckets.delete(bucketKey);
+    }
+  }
+
+  const current = buckets.get(key);
+  if (!current || current.resetAt <= now) {
+    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    return { allowed: true, retryAfter: 0 };
+  }
+
+  current.count += 1;
+  buckets.set(key, current);
+  if (current.count > limit) {
+    return {
+      allowed: false,
+      retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
+    };
+  }
+
+  return { allowed: true, retryAfter: 0 };
+}
 
 function parseCookies(request: Request) {
   const header = request.headers.get("cookie") || "";
@@ -48,17 +91,21 @@ async function getProfile(accessToken: string) {
   const { url, key } = supabasePublicConfig();
   const headers = { apikey: key, Authorization: `Bearer ${accessToken}` };
 
-  const userResponse = await fetch(`${url}/auth/v1/user`, { headers });
+  const userResponse = await fetch(`${url}/auth/v1/user`, {
+    headers,
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!userResponse.ok) return null;
 
   const user = await userResponse.json() as { id: string; email?: string };
   const membershipResponse = await fetch(
-    `${url}/rest/v1/organization_members?user_id=eq.${encodeURIComponent(user.id)}&select=organization_id,role`,
-    { headers },
+    `${url}/rest/v1/organization_members?user_id=eq.${encodeURIComponent(user.id)}&select=organization_id,role&order=created_at.asc`,
+    { headers, signal: AbortSignal.timeout(10_000) },
   );
 
   if (!membershipResponse.ok) {
-    throw new Error(`Falha ao carregar organizações: ${await membershipResponse.text()}`);
+    console.error("Falha ao carregar organizações", membershipResponse.status, await membershipResponse.text());
+    throw new Error("Falha ao carregar organizações");
   }
 
   const memberships = await membershipResponse.json() as Membership[];
@@ -74,6 +121,7 @@ async function refreshSession(refreshToken: string): Promise<SessionPayload | nu
     method: "POST",
     headers: { apikey: key, "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!response.ok) return null;
@@ -99,7 +147,10 @@ export const Route = createFileRoute("/api/auth")({
           }
 
           if (!profile) {
-            return noStore(Response.json({ authenticated: false }, { status: 401 }));
+            const response = Response.json({ authenticated: false }, { status: 401 });
+            response.headers.append("Set-Cookie", clearCookie(ACCESS_COOKIE));
+            response.headers.append("Set-Cookie", clearCookie(REFRESH_COOKIE));
+            return noStore(response);
           }
 
           const organizationId = activeOrganizationId(profile.memberships);
@@ -127,13 +178,20 @@ export const Route = createFileRoute("/api/auth")({
       },
 
       POST: async ({ request }) => {
-        const body = await request.json().catch(() => null) as {
+        const raw = await request.text();
+        if (raw.length > 16_000) {
+          return noStore(Response.json({ error: "Payload muito grande" }, { status: 413 }));
+        }
+
+        let body: {
           action?: "login" | "logout";
           email?: string;
           password?: string;
-        } | null;
+        } | null = null;
 
-        if (!body) {
+        try {
+          body = JSON.parse(raw);
+        } catch {
           return noStore(Response.json({ error: "JSON inválido" }, { status: 400 }));
         }
 
@@ -146,19 +204,46 @@ export const Route = createFileRoute("/api/auth")({
               await fetch(`${url}/auth/v1/logout`, {
                 method: "POST",
                 headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
+                signal: AbortSignal.timeout(10_000),
               });
             } catch (error) {
               console.error("Supabase logout failed", error);
             }
           }
+
           const response = Response.json({ ok: true });
           response.headers.append("Set-Cookie", clearCookie(ACCESS_COOKIE));
           response.headers.append("Set-Cookie", clearCookie(REFRESH_COOKIE));
           return noStore(response);
         }
 
-        if (body.action !== "login" || !body.email || !body.password) {
+        if (
+          body.action !== "login" ||
+          typeof body.email !== "string" ||
+          typeof body.password !== "string" ||
+          !body.email ||
+          !body.password
+        ) {
           return noStore(Response.json({ error: "E-mail e senha são obrigatórios" }, { status: 400 }));
+        }
+
+        if (body.email.length > 320 || body.password.length > 1024) {
+          return noStore(Response.json({ error: "Credenciais inválidas" }, { status: 400 }));
+        }
+
+        const normalizedEmail = body.email.trim().toLowerCase();
+        const ip = clientIp(request);
+        const ipLimit = consumeLoginBucket(`ip:${ip}`, 30, 10 * 60 * 1000);
+        const pairLimit = consumeLoginBucket(`pair:${ip}:${normalizedEmail}`, 8, 10 * 60 * 1000);
+
+        if (!ipLimit.allowed || !pairLimit.allowed) {
+          const retryAfter = Math.max(ipLimit.retryAfter, pairLimit.retryAfter);
+          const response = Response.json(
+            { error: "Muitas tentativas. Aguarde e tente novamente." },
+            { status: 429 },
+          );
+          response.headers.set("Retry-After", String(retryAfter));
+          return noStore(response);
         }
 
         try {
@@ -167,9 +252,10 @@ export const Route = createFileRoute("/api/auth")({
             method: "POST",
             headers: { apikey: key, "Content-Type": "application/json" },
             body: JSON.stringify({
-              email: body.email.trim().toLowerCase(),
+              email: normalizedEmail,
               password: body.password,
             }),
+            signal: AbortSignal.timeout(10_000),
           });
 
           if (!loginResponse.ok) {
@@ -186,8 +272,10 @@ export const Route = createFileRoute("/api/auth")({
 
           const organizationId = activeOrganizationId(profile.memberships);
           if (!organizationId) {
-            return Response.json({ error: "Usuário sem organização vinculada" }, { status: 403 });
+            return noStore(Response.json({ error: "Usuário sem organização vinculada" }, { status: 403 }));
           }
+
+          loginBuckets().delete(`pair:${ip}:${normalizedEmail}`);
 
           const response = Response.json({
             authenticated: true,
@@ -200,7 +288,7 @@ export const Route = createFileRoute("/api/auth")({
           return noStore(response);
         } catch (error) {
           console.error("Auth POST failed", error);
-          return noStore(Response.json({ error: "Falha na configuração de autenticação" }, { status: 500 }));
+          return noStore(Response.json({ error: "Falha temporária de autenticação" }, { status: 500 }));
         }
       },
     },
