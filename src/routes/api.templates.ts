@@ -55,7 +55,11 @@ export const Route = createFileRoute("/api/templates")({
 
       POST: async ({ request }) => {
         try {
-          const body = await request.json() as {
+          const raw = await request.text();
+          if (raw.length > 32_000) {
+            return Response.json({ error: "Payload muito grande" }, { status: 413 });
+          }
+          let body: {
             action?: "create" | "update" | "delete";
             organizationId?: string;
             id?: string;
@@ -63,8 +67,16 @@ export const Route = createFileRoute("/api/templates")({
             content?: string;
             category?: string;
           };
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            return Response.json({ error: "JSON inválido" }, { status: 400 });
+          }
           if (!body.organizationId || !body.action) {
             return Response.json({ error: "organizationId e action são obrigatórios" }, { status: 400 });
+          }
+          if (!["create", "update", "delete"].includes(body.action)) {
+            return Response.json({ error: "Ação inválida" }, { status: 400 });
           }
           const user = await authorizeOrganization(request, body.organizationId);
           requireAdmin(user);
