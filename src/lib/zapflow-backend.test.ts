@@ -3,6 +3,7 @@ import {
   allocateEvenly,
   normalizePhone,
   prepareRecipients,
+  renderRecipientMessage,
 } from "./campaign-queue-server";
 import { normalizeEvolutionBaseUrl } from "./gateway/evolution";
 
@@ -65,5 +66,35 @@ describe("Evolution URL hardening", () => {
     expect(normalizeEvolutionBaseUrl("https://user:pass@example.com")).toBeNull();
     expect(normalizeEvolutionBaseUrl("https://example.com/api")).toBeNull();
     expect(normalizeEvolutionBaseUrl("https://example.com?x=1")).toBeNull();
+  });
+});
+
+
+describe("campaign template rendering", () => {
+  test("renders supported recipient variables", () => {
+    expect(
+      renderRecipientMessage(
+        "Olá {{nome}}, seu telefone é {{telefone}}.",
+        { phone: "27999999999", normalizedPhone: "5527999999999", consent: true, name: "Maria" },
+      ),
+    ).toBe("Olá Maria, seu telefone é 5527999999999.");
+  });
+
+  test("uses a safe fallback when recipient name is missing", () => {
+    expect(
+      renderRecipientMessage(
+        "Olá {{ nome }}!",
+        { phone: "27999999999", normalizedPhone: "5527999999999", consent: true },
+      ),
+    ).toBe("Olá cliente!");
+  });
+
+  test("rejects unsupported variables", () => {
+    expect(() =>
+      renderRecipientMessage(
+        "Olá {{empresa}}",
+        { phone: "27999999999", normalizedPhone: "5527999999999", consent: true },
+      ),
+    ).toThrow("Variável de template não suportada");
   });
 });
