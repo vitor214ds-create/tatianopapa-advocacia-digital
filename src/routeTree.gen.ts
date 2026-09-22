@@ -10,33 +10,154 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as ApiAuthRouteImport } from './routes/api.auth'
+import { Route as ApiCampaignWorkerRouteImport } from './routes/api.campaign-worker'
+import { Route as ApiCampaignsRouteImport } from './routes/api.campaigns'
+import { Route as ApiDashboardRouteImport } from './routes/api.dashboard'
+import { Route as ApiGatewayRouteImport } from './routes/api.gateway'
+import { Route as ApiGatewayWebhookRouteImport } from './routes/api.gateway-webhook'
+import { Route as ApiHealthRouteImport } from './routes/api.health'
+import { Route as ApiTemplatesRouteImport } from './routes/api.templates'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthRoute = ApiAuthRouteImport.update({
+  id: '/api/auth',
+  path: '/api/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCampaignWorkerRoute = ApiCampaignWorkerRouteImport.update({
+  id: '/api/campaign-worker',
+  path: '/api/campaign-worker',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCampaignsRoute = ApiCampaignsRouteImport.update({
+  id: '/api/campaigns',
+  path: '/api/campaigns',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDashboardRoute = ApiDashboardRouteImport.update({
+  id: '/api/dashboard',
+  path: '/api/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGatewayRoute = ApiGatewayRouteImport.update({
+  id: '/api/gateway',
+  path: '/api/gateway',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGatewayWebhookRoute = ApiGatewayWebhookRouteImport.update({
+  id: '/api/gateway-webhook',
+  path: '/api/gateway-webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTemplatesRoute = ApiTemplatesRouteImport.update({
+  id: '/api/templates',
+  path: '/api/templates',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/api/auth': typeof ApiAuthRoute
+  '/api/campaign-worker': typeof ApiCampaignWorkerRoute
+  '/api/campaigns': typeof ApiCampaignsRoute
+  '/api/dashboard': typeof ApiDashboardRoute
+  '/api/gateway': typeof ApiGatewayRoute
+  '/api/gateway-webhook': typeof ApiGatewayWebhookRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/templates': typeof ApiTemplatesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/api/auth': typeof ApiAuthRoute
+  '/api/campaign-worker': typeof ApiCampaignWorkerRoute
+  '/api/campaigns': typeof ApiCampaignsRoute
+  '/api/dashboard': typeof ApiDashboardRoute
+  '/api/gateway': typeof ApiGatewayRoute
+  '/api/gateway-webhook': typeof ApiGatewayWebhookRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/templates': typeof ApiTemplatesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/api/auth': typeof ApiAuthRoute
+  '/api/campaign-worker': typeof ApiCampaignWorkerRoute
+  '/api/campaigns': typeof ApiCampaignsRoute
+  '/api/dashboard': typeof ApiDashboardRoute
+  '/api/gateway': typeof ApiGatewayRoute
+  '/api/gateway-webhook': typeof ApiGatewayWebhookRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/templates': typeof ApiTemplatesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/api/auth'
+    | '/api/campaign-worker'
+    | '/api/campaigns'
+    | '/api/dashboard'
+    | '/api/gateway'
+    | '/api/gateway-webhook'
+    | '/api/health'
+    | '/api/templates'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/login'
+    | '/api/auth'
+    | '/api/campaign-worker'
+    | '/api/campaigns'
+    | '/api/dashboard'
+    | '/api/gateway'
+    | '/api/gateway-webhook'
+    | '/api/health'
+    | '/api/templates'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/api/auth'
+    | '/api/campaign-worker'
+    | '/api/campaigns'
+    | '/api/dashboard'
+    | '/api/gateway'
+    | '/api/gateway-webhook'
+    | '/api/health'
+    | '/api/templates'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LoginRoute: typeof LoginRoute
+  ApiAuthRoute: typeof ApiAuthRoute
+  ApiCampaignWorkerRoute: typeof ApiCampaignWorkerRoute
+  ApiCampaignsRoute: typeof ApiCampaignsRoute
+  ApiDashboardRoute: typeof ApiDashboardRoute
+  ApiGatewayRoute: typeof ApiGatewayRoute
+  ApiGatewayWebhookRoute: typeof ApiGatewayWebhookRoute
+  ApiHealthRoute: typeof ApiHealthRoute
+  ApiTemplatesRoute: typeof ApiTemplatesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +169,83 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth': {
+      id: '/api/auth'
+      path: '/api/auth'
+      fullPath: '/api/auth'
+      preLoaderRoute: typeof ApiAuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/campaign-worker': {
+      id: '/api/campaign-worker'
+      path: '/api/campaign-worker'
+      fullPath: '/api/campaign-worker'
+      preLoaderRoute: typeof ApiCampaignWorkerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/campaigns': {
+      id: '/api/campaigns'
+      path: '/api/campaigns'
+      fullPath: '/api/campaigns'
+      preLoaderRoute: typeof ApiCampaignsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/dashboard': {
+      id: '/api/dashboard'
+      path: '/api/dashboard'
+      fullPath: '/api/dashboard'
+      preLoaderRoute: typeof ApiDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/gateway': {
+      id: '/api/gateway'
+      path: '/api/gateway'
+      fullPath: '/api/gateway'
+      preLoaderRoute: typeof ApiGatewayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/gateway-webhook': {
+      id: '/api/gateway-webhook'
+      path: '/api/gateway-webhook'
+      fullPath: '/api/gateway-webhook'
+      preLoaderRoute: typeof ApiGatewayWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/templates': {
+      id: '/api/templates'
+      path: '/api/templates'
+      fullPath: '/api/templates'
+      preLoaderRoute: typeof ApiTemplatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LoginRoute: LoginRoute,
+  ApiAuthRoute: ApiAuthRoute,
+  ApiCampaignWorkerRoute: ApiCampaignWorkerRoute,
+  ApiCampaignsRoute: ApiCampaignsRoute,
+  ApiDashboardRoute: ApiDashboardRoute,
+  ApiGatewayRoute: ApiGatewayRoute,
+  ApiGatewayWebhookRoute: ApiGatewayWebhookRoute,
+  ApiHealthRoute: ApiHealthRoute,
+  ApiTemplatesRoute: ApiTemplatesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
