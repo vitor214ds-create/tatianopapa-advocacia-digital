@@ -39,23 +39,26 @@ function mutationOriginError(request: Request) {
 }
 
 function hardenResponse(request: Request, response: Response) {
-  const headers = new Headers(response.headers);
-  headers.set("X-Content-Type-Options", "nosniff");
-  headers.set("Referrer-Policy", "same-origin");
-  headers.set("X-Frame-Options", "DENY");
-  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  headers.set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+  // Keep the original Response object. TanStack Start streams SSR HTML and
+  // wrapping response.body in a second Response can detach/truncate that stream
+  // before the hydration scripts are flushed.
+  try {
+    response.headers.set("X-Content-Type-Options", "nosniff");
+    response.headers.set("Referrer-Policy", "same-origin");
+    response.headers.set("X-Frame-Options", "DENY");
+    response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    response.headers.set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
 
-  if (new URL(request.url).pathname.startsWith("/api/")) {
-    headers.set("Cache-Control", "no-store, max-age=0");
-    headers.set("Pragma", "no-cache");
+    if (new URL(request.url).pathname.startsWith("/api/")) {
+      response.headers.set("Cache-Control", "no-store, max-age=0");
+      response.headers.set("Pragma", "no-cache");
+    }
+  } catch (error) {
+    // Security headers must never break the streamed application response.
+    console.error("Could not apply response hardening headers", error);
   }
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return response;
 }
 
 async function normalizeCatastrophicSsrResponse(response: Response): Promise<Response> {
