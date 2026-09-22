@@ -12,6 +12,33 @@ import {
 } from "../lib/gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
 
+function accessToken(request: Request) {
+  const authorization = request.headers.get("authorization");
+  if (authorization?.startsWith("Bearer ")) return authorization.slice(7);
+
+  const cookie = (request.headers.get("cookie") || "")
+    .split(";")
+    .map(value => value.trim())
+    .find(value => value.startsWith("zapflow_access_token="));
+
+  return cookie ? decodeURIComponent(cookie.split("=").slice(1).join("=")) : null;
+}
+
+function getSupabaseConfig(request: Request) {
+  const { url, key } = supabasePublicConfig();
+  const token = accessToken(request);
+  if (!token) throw new Response("Não autenticado", { status: 401 });
+
+  return {
+    url,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  };
+}
+
 function environmentGatewayConfig(): EvolutionConfig | null {
   const baseUrl = normalizeEvolutionBaseUrl(runtimeEnv("EVOLUTION_API_URL"));
   const apiKey = runtimeEnv("EVOLUTION_API_KEY")?.trim();
