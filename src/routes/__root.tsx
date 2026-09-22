@@ -50,6 +50,10 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  // ZapFlow is an authenticated application, not an SEO page. Keeping the
+  // route tree client-only avoids Railway/SSR stream truncation and makes all
+  // interactions hydrate from a single client bundle.
+  ssr: false,
   head: () => ({
     meta: [
       { charSet: "utf-8" },
