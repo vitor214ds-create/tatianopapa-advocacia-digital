@@ -1,4 +1,4 @@
-// @lovable.dev/vite-tanstack-config already includes TanStack Start, React,
+// @lovable.dev/vite-tanstack-config includes TanStack Start, React,
 // Tailwind, tsconfig paths, env injection and Nitro support.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
@@ -9,8 +9,13 @@ const isRailway = Boolean(
 );
 
 export default defineConfig({
-  // Use TanStack Start's default server entry. The previous custom entry
-  // intercepted streamed HTML responses and production could receive an
-  // incomplete hydration bootstrap, leaving the UI visible but non-interactive.
+  tanstackStart: {
+    // ZapFlow is an authenticated operations panel. True SPA mode generates
+    // a static application shell instead of relying on streamed SSR hydration,
+    // while server routes under /api/* continue to run normally.
+    spa: {
+      enabled: true,
+    },
+  },
   ...(isRailway ? { nitro: { preset: "node-server" } } : {}),
 });
