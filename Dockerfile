@@ -20,10 +20,7 @@ ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
 
-# The build emits dist/ (client assets + fetch handler); server/node-entry.mjs
-# serves both from a single Node process.
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/server ./server
+COPY --from=build /app/.output ./.output
 
 EXPOSE 3000
-CMD ["node", "server/node-entry.mjs"]
+CMD ["node", ".output/server/index.mjs"]
