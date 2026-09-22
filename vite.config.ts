@@ -9,13 +9,5 @@ const isRailway = Boolean(
 );
 
 export default defineConfig({
-  tanstackStart: {
-    // ZapFlow is an authenticated operations panel. True SPA mode generates
-    // a static application shell instead of relying on streamed SSR hydration,
-    // while server routes under /api/* continue to run normally.
-    spa: {
-      enabled: true,
-    },
-  },
   ...(isRailway ? { nitro: { preset: "node-server" } } : {}),
 });
