@@ -61,6 +61,26 @@ function hardenResponse(request: Request, response: Response) {
   return response;
 }
 
+async function bufferHtmlResponse(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/html")) return response;
+
+  // TanStack Start emits HTML as a stream. In the current Railway/Bun runtime
+  // the stream is being cut before the hydration tail is flushed, leaving a
+  // visually rendered but non-interactive page. Buffering guarantees that the
+  // complete HTML document is produced before it is sent over the network.
+  const body = await response.text();
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.set("Content-Length", String(new TextEncoder().encode(body).byteLength));
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 async function normalizeCatastrophicSsrResponse(response: Response): Promise<Response> {
   if (response.status < 500) return response;
   const contentType = response.headers.get("content-type") ?? "";
@@ -90,7 +110,9 @@ export default {
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return hardenResponse(request, await normalizeCatastrophicSsrResponse(response));
+      const normalized = await normalizeCatastrophicSsrResponse(response);
+      const complete = await bufferHtmlResponse(normalized);
+      return hardenResponse(request, complete);
     } catch (error) {
       console.error(error);
       return hardenResponse(
