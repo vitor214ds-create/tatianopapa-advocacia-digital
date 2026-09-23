@@ -77,11 +77,73 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   errorComponent: ErrorComponent,
 });
 
+const assetRecoveryScript = `
+(function () {
+  var key = "zapflow_asset_recovery";
+  var recovering = false;
+
+  function showFallback() {
+    if (document.getElementById("zapflow-asset-fallback")) return;
+    var render = function () {
+      if (!document.body || document.getElementById("zapflow-asset-fallback")) return;
+      var box = document.createElement("div");
+      box.id = "zapflow-asset-fallback";
+      box.setAttribute("role", "alert");
+      box.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;padding:14px 16px;border-radius:12px;background:#fff7e8;color:#6d4300;border:1px solid #e7ba65;font:600 13px/1.45 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.12)";
+      box.innerHTML = "O ZapFlow detectou uma atualização do sistema e não conseguiu carregar todos os arquivos. <a href=\\\""+location.pathname+"?zf_reload="+Date.now()+"\\\" style=\\\"color:#0b7a38;text-decoration:underline\\\">Recarregar agora</a>";
+      document.body.appendChild(box);
+    };
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", render, { once: true });
+    } else {
+      render();
+    }
+  }
+
+  function recoverAsset(url) {
+    if (!url || url.indexOf("/assets/") === -1 || recovering) return;
+    recovering = true;
+    var now = Date.now();
+    var last = Number(sessionStorage.getItem(key) || "0");
+
+    if (last && now - last < 15000) {
+      showFallback();
+      return;
+    }
+
+    sessionStorage.setItem(key, String(now));
+    var target = new URL(location.href);
+    target.searchParams.set("zf_reload", String(now));
+    location.replace(target.toString());
+  }
+
+  window.addEventListener("error", function (event) {
+    var target = event.target;
+    if (!target) return;
+    var tag = String(target.tagName || "").toUpperCase();
+    if (tag === "SCRIPT") recoverAsset(target.src || "");
+    if (tag === "LINK") recoverAsset(target.href || "");
+  }, true);
+
+  window.addEventListener("unhandledrejection", function (event) {
+    var reason = event.reason;
+    var message = String((reason && reason.message) || reason || "");
+    if (/dynamically imported module|module script|ChunkLoadError|Loading chunk|Importing a module/i.test(message)) {
+      recoverAsset("/assets/dynamic-chunk");
+    }
+  });
+})();
+`;
+
 function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
       <head><HeadContent /></head>
-      <body>{children}<Scripts /></body>
+      <body>
+        <script dangerouslySetInnerHTML={{ __html: assetRecoveryScript }} />
+        {children}
+        <Scripts />
+      </body>
     </html>
   );
 }
