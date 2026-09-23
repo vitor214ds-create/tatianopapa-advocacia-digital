@@ -7,6 +7,16 @@ function boot() {
     hydrateRoot(document, <StartClient />);
     requestAnimationFrame(() => {
       document.documentElement.dataset.zapflowClient = "ready";
+      sessionStorage.removeItem("zapflow_asset_recovery");
+      const current = new URL(window.location.href);
+      if (current.searchParams.has("zf_reload")) {
+        current.searchParams.delete("zf_reload");
+        window.history.replaceState(
+          window.history.state,
+          "",
+          current.pathname + current.search + current.hash,
+        );
+      }
     });
   } catch (error) {
     document.documentElement.dataset.zapflowClient = "failed";
