@@ -62,7 +62,18 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 async function rawFetch(input: RequestInfo | URL, init: RequestInit = {}) {
-  return fetch(input, { ...init, credentials: "include" });
+  const signal = init.signal ?? AbortSignal.timeout(15_000);
+  try {
+    return await fetch(input, { ...init, signal, credentials: "include" });
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      throw new Error("A conexão demorou demais. Tente novamente.");
+    }
+    throw error;
+  }
 }
 
 async function protectedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
