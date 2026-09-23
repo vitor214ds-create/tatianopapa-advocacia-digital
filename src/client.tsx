@@ -3,8 +3,13 @@ import { hydrateRoot } from "react-dom/client";
 
 function boot() {
   try {
+    document.documentElement.dataset.zapflowClient = "booting";
     hydrateRoot(document, <StartClient />);
+    requestAnimationFrame(() => {
+      document.documentElement.dataset.zapflowClient = "ready";
+    });
   } catch (error) {
+    document.documentElement.dataset.zapflowClient = "failed";
     console.error("ZapFlow client hydration failed", error);
 
     // Keep a visible diagnostic instead of leaving a dead-looking interface.
