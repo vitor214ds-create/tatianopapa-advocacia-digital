@@ -9,5 +9,25 @@ const isRailway = Boolean(
 );
 
 export default defineConfig({
-  ...(isRailway ? { nitro: { preset: "node-server" } } : {}),
+  ...(isRailway
+    ? {
+        nitro: {
+          preset: "node-server",
+          routeRules: {
+            "/": {
+              headers: {
+                "cache-control": "no-store, max-age=0, must-revalidate",
+                pragma: "no-cache",
+              },
+            },
+            "/login": {
+              headers: {
+                "cache-control": "no-store, max-age=0, must-revalidate",
+                pragma: "no-cache",
+              },
+            },
+          },
+        },
+      }
+    : {}),
 });
