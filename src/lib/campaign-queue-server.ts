@@ -193,6 +193,59 @@ export function resolveCampaignStart(scheduledAt?: string, now = Date.now()) {
   return Math.max(parsed, now);
 }
 
+export function buildRoundRobinSchedule<T extends {
+  session: ActiveSession;
+  sessionSequence: number;
+}>(
+  allocations: T[],
+  startedAt: number,
+  scheduledEndAt?: string,
+  configuredPerSessionGapMs = perSessionGapMs(),
+) {
+  if (!allocations.length) return { timestamps: [] as number[], globalGapMs: 0, endedAt: startedAt };
+
+  const sessionIds = [...new Set(allocations.map(item => item.session.id))];
+  const counts = new Map<string, number>();
+  for (const allocation of allocations) {
+    counts.set(allocation.session.id, (counts.get(allocation.session.id) || 0) + 1);
+  }
+
+  const overLimit = [...counts.values()].find(count => count > 150);
+  if (overLimit) {
+    throw new Error(
+      "A campanha excede o limite de 150 mensagens por sessão em 24 horas. Reduza a lista ou conecte mais números.",
+    );
+  }
+
+  const minimumGlobalGap = Math.max(1_000, Math.ceil(configuredPerSessionGapMs / Math.max(1, sessionIds.length)));
+  let globalGapMs = minimumGlobalGap;
+  let endTimestamp: number | null = null;
+
+  if (scheduledEndAt) {
+    endTimestamp = Date.parse(scheduledEndAt);
+    if (!Number.isFinite(endTimestamp)) throw new Error("Horário final inválido");
+    if (endTimestamp <= startedAt) throw new Error("O horário final precisa ser posterior ao horário inicial");
+
+    if (allocations.length > 1) {
+      const spreadGap = Math.floor((endTimestamp - startedAt) / (allocations.length - 1));
+      if (spreadGap < minimumGlobalGap) {
+        throw new Error(
+          "A janela escolhida é curta demais para distribuir os contatos com segurança entre as sessões.",
+        );
+      }
+      globalGapMs = spreadGap;
+    }
+  }
+
+  const timestamps = allocations.map((_, index) => startedAt + index * globalGapMs);
+  const endedAt = timestamps[timestamps.length - 1] || startedAt;
+  if (endTimestamp !== null && endedAt > endTimestamp) {
+    throw new Error("A campanha não cabe dentro da janela de envio escolhida");
+  }
+
+  return { timestamps, globalGapMs, endedAt };
+}
+
 export async function createQueuedCampaign(
   request: Request,
   input: {
@@ -202,6 +255,7 @@ export async function createQueuedCampaign(
     createdBy: string;
     recipients: QueueRecipient[];
     scheduledAt?: string;
+    scheduledEndAt?: string;
   },
 ) {
   const prepared = prepareRecipients(input.recipients);
@@ -222,15 +276,21 @@ export async function createQueuedCampaign(
 
   const gap = perSessionGapMs();
   const startedAt = resolveCampaignStart(input.scheduledAt);
+  const schedule = buildRoundRobinSchedule(
+    allocations,
+    startedAt,
+    input.scheduledEndAt,
+    gap,
+  );
 
-  const jobs = allocations.map(({ recipient, session, sessionSequence }) => ({
+  const jobs = allocations.map(({ recipient, session }, index) => ({
     whatsapp_account_id: session.id,
     session_id: session.session_id,
     recipient_id: recipient.id || null,
     recipient_name: recipient.name || null,
     phone: recipient.normalizedPhone,
     message: renderRecipientMessage(input.message, recipient),
-    next_attempt_at: new Date(startedAt + sessionSequence * gap).toISOString(),
+    next_attempt_at: new Date(schedule.timestamps[index]).toISOString(),
     max_attempts: 3,
   }));
 
@@ -272,7 +332,9 @@ export async function createQueuedCampaign(
     sessions: sessions.length,
     allocation,
     perSessionGapMs: gap,
+    globalGapMs: schedule.globalGapMs,
     scheduledAt: input.scheduledAt ? new Date(startedAt).toISOString() : null,
+    scheduledEndAt: input.scheduledEndAt ? new Date(schedule.endedAt).toISOString() : null,
   };
 }
 

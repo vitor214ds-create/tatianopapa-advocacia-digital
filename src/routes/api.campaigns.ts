@@ -60,13 +60,21 @@ export const Route = createFileRoute("/api/campaigns")({
               if (index >= 20 || campaign.status !== "QUEUED") return campaign;
               try {
                 const jobsResponse = await fetch(
-                  `${url}/rest/v1/zapflow_message_jobs?organization_id=eq.${encodeURIComponent(organizationId)}&campaign_id=eq.${encodeURIComponent(campaign.id)}&status=in.(QUEUED,RETRY)&select=next_attempt_at&order=next_attempt_at.asc&limit=1`,
+                  `${url}/rest/v1/zapflow_message_jobs?organization_id=eq.${encodeURIComponent(organizationId)}&campaign_id=eq.${encodeURIComponent(campaign.id)}&status=in.(QUEUED,RETRY)&select=next_attempt_at&order=next_attempt_at.asc`,
                   { headers },
                 );
                 if (!jobsResponse.ok) return campaign;
                 const jobs = await jobsResponse.json() as Array<{ next_attempt_at?: string | null }>;
-                const scheduledAt = jobs[0]?.next_attempt_at || null;
-                return scheduledAt ? { ...campaign, scheduled_at: scheduledAt } : campaign;
+                const times = jobs
+                  .map(job => job.next_attempt_at)
+                  .filter((value): value is string => Boolean(value))
+                  .sort();
+                if (!times.length) return campaign;
+                return {
+                  ...campaign,
+                  scheduled_at: times[0],
+                  scheduled_end_at: times[times.length - 1],
+                };
               } catch {
                 return campaign;
               }
@@ -95,6 +103,7 @@ export const Route = createFileRoute("/api/campaigns")({
             message?: string;
             recipients?: QueueRecipient[];
             scheduledAt?: string;
+            scheduledEndAt?: string;
           };
           try {
             body = JSON.parse(raw);
@@ -144,6 +153,23 @@ export const Route = createFileRoute("/api/campaigns")({
             }
           }
 
+          if (body.scheduledEndAt !== undefined) {
+            if (!body.scheduledAt) {
+              return Response.json({ error: "Informe o horário inicial antes do horário final" }, { status: 400 });
+            }
+            if (typeof body.scheduledEndAt !== "string" || body.scheduledEndAt.length > 64) {
+              return Response.json({ error: "Horário final inválido" }, { status: 400 });
+            }
+            const start = Date.parse(body.scheduledAt);
+            const end = Date.parse(body.scheduledEndAt);
+            if (!Number.isFinite(end) || end <= start) {
+              return Response.json({ error: "O horário final precisa ser posterior ao horário inicial" }, { status: 400 });
+            }
+            if (end > Date.now() + 366 * 24 * 60 * 60 * 1000) {
+              return Response.json({ error: "A janela de envio deve estar dentro dos próximos 12 meses" }, { status: 400 });
+            }
+          }
+
           const invalidRecipient = body.recipients.some(recipient =>
             !recipient ||
             typeof recipient !== "object" ||
@@ -167,6 +193,7 @@ export const Route = createFileRoute("/api/campaigns")({
             recipients: body.recipients,
             createdBy: user.userId,
             scheduledAt: body.scheduledAt,
+            scheduledEndAt: body.scheduledEndAt,
           });
 
           return Response.json({ ok: true, status: "QUEUED", ...queued }, { status: 201 });

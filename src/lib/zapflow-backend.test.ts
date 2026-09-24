@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   allocateEvenly,
+  buildRoundRobinSchedule,
   normalizePhone,
   prepareRecipients,
   renderRecipientMessage,
@@ -115,5 +116,62 @@ describe("campaign scheduling", () => {
     const now = Date.parse("2026-10-01T12:00:00.000Z");
     expect(() => resolveCampaignStart("2026-10-01T11:00:00.000Z", now)).toThrow("já passou");
     expect(() => resolveCampaignStart("2028-10-01T12:00:00.000Z", now)).toThrow("12 meses");
+  });
+});
+
+
+describe("round-robin campaign window", () => {
+  test("cycles recipients across sessions and fits the requested window", () => {
+    const sessions = [
+      { id: "a", session_id: "session-a" },
+      { id: "b", session_id: "session-b" },
+      { id: "c", session_id: "session-c" },
+    ];
+    const recipients = Array.from({ length: 6 }, (_, index) => ({
+      normalizedPhone: "55279999999" + index,
+    }));
+    const allocations = allocateEvenly(recipients, sessions);
+    expect(allocations.map(item => item.session.id)).toEqual(["a", "b", "c", "a", "b", "c"]);
+
+    const start = Date.parse("2026-10-01T11:00:00.000Z");
+    const end = Date.parse("2026-10-01T16:00:00.000Z");
+    const schedule = buildRoundRobinSchedule(
+      allocations,
+      start,
+      new Date(end).toISOString(),
+      15_000,
+    );
+    expect(schedule.timestamps[0]).toBe(start);
+    expect(schedule.timestamps[schedule.timestamps.length - 1]).toBeLessThanOrEqual(end);
+  });
+
+  test("rejects more than 150 jobs assigned to one session", () => {
+    const session = { id: "a", session_id: "session-a" };
+    const allocations = Array.from({ length: 151 }, (_, index) => ({
+      recipient: { normalizedPhone: "5527999" + String(index).padStart(6, "0") },
+      session,
+      sessionSequence: index,
+    }));
+    expect(() => buildRoundRobinSchedule(allocations, Date.now())).toThrow("150 mensagens");
+  });
+
+  test("rejects a window that is too short for the safe spacing", () => {
+    const sessions = [
+      { id: "a", session_id: "session-a" },
+      { id: "b", session_id: "session-b" },
+    ];
+    const recipients = Array.from({ length: 10 }, (_, index) => ({
+      normalizedPhone: "5527988" + String(index).padStart(6, "0"),
+    }));
+    const allocations = allocateEvenly(recipients, sessions);
+    const start = Date.parse("2026-10-01T11:00:00.000Z");
+    expect(() =>
+      buildRoundRobinSchedule(
+        allocations,
+        start,
+        new Date(start + 4_000).toISOString(),
+        15_000,
+      ),
+    ).toThrow("curta demais");
   });
 });

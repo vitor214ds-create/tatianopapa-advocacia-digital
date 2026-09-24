@@ -218,8 +218,11 @@ async function testDashboard(browser, mobile = false) {
     });
     await page.getByText(/1 contato\(s\) importado\(s\)/i).waitFor();
     await page.getByRole("button", { name: "Programar envio", exact: true }).click();
-    await page.locator('input[type="datetime-local"]').waitFor({ state: "visible" });
-    console.log("PASS campaign CSV import + schedule controls");
+    const scheduleInputs = page.locator('input[type="datetime-local"]');
+    await scheduleInputs.first().waitFor({ state: "visible" });
+    assert(await scheduleInputs.count() === 2, "Expected start and end scheduling inputs");
+    await page.getByText(/round-robin/i).waitFor({ state: "visible" });
+    console.log("PASS campaign TXT/CSV import + round-robin schedule window controls");
 
     await clickSection(page, "Templates");
     const newTemplate = page.getByRole("button", { name: /Novo template/i }).first();

@@ -298,6 +298,7 @@ function CampaignsPage({
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [deliveryMode, setDeliveryMode] = useState<"now" | "scheduled">("now");
   const [scheduledLocal, setScheduledLocal] = useState("");
+  const [scheduledEndLocal, setScheduledEndLocal] = useState("");
   const [importedFileName, setImportedFileName] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -317,6 +318,7 @@ function CampaignsPage({
   const values = allocation.map(item => item.jobs);
   const difference = values.length ? Math.max(...values) - Math.min(...values) : 0;
   const inputLines = parsedInput.rows.length;
+  const theoreticalCapacity = active.length * 150;
 
   async function refreshCampaigns() {
     try {
@@ -433,26 +435,42 @@ function CampaignsPage({
       return;
     }
 
+    if (recipients.length > theoreticalCapacity) {
+      setError(
+        "A lista possui " + recipients.length + " contatos, mas " + active.length +
+        " número(s) conectado(s) comportam no máximo " + theoreticalCapacity +
+        " envios dentro do limite de 150 por sessão/24h.",
+      );
+      return;
+    }
+
     let scheduledAt: string | undefined;
+    let scheduledEndAt: string | undefined;
     if (deliveryMode === "scheduled") {
-      if (!scheduledLocal) {
-        setError("Escolha a data e a hora do envio.");
+      if (!scheduledLocal || !scheduledEndLocal) {
+        setError("Escolha a data/hora de início e a data/hora de término.");
         return;
       }
       const scheduledDate = new Date(scheduledLocal);
-      if (Number.isNaN(scheduledDate.getTime())) {
-        setError("Data de agendamento inválida.");
+      const scheduledEndDate = new Date(scheduledEndLocal);
+      if (Number.isNaN(scheduledDate.getTime()) || Number.isNaN(scheduledEndDate.getTime())) {
+        setError("Data ou horário de agendamento inválido.");
         return;
       }
       if (scheduledDate.getTime() <= Date.now() + 30_000) {
-        setError("O agendamento precisa estar pelo menos 30 segundos no futuro.");
+        setError("O agendamento precisa começar pelo menos 30 segundos no futuro.");
         return;
       }
-      if (scheduledDate.getTime() > Date.now() + 366 * 24 * 60 * 60 * 1000) {
-        setError("O agendamento deve estar dentro dos próximos 12 meses.");
+      if (scheduledEndDate.getTime() <= scheduledDate.getTime()) {
+        setError("O horário final precisa ser posterior ao horário inicial.");
+        return;
+      }
+      if (scheduledEndDate.getTime() > Date.now() + 366 * 24 * 60 * 60 * 1000) {
+        setError("A janela de envio deve estar dentro dos próximos 12 meses.");
         return;
       }
       scheduledAt = scheduledDate.toISOString();
+      scheduledEndAt = scheduledEndDate.toISOString();
     }
 
     setSaving(true);
@@ -463,9 +481,11 @@ function CampaignsPage({
         message: message.trim(),
         recipients,
         scheduledAt,
+        scheduledEndAt,
       });
       const scheduleText = result.scheduledAt
-        ? " Programada para " + new Date(result.scheduledAt).toLocaleString("pt-BR") + "."
+        ? " Janela: " + new Date(result.scheduledAt).toLocaleString("pt-BR") +
+          (result.scheduledEndAt ? " até " + new Date(result.scheduledEndAt).toLocaleString("pt-BR") : "") + "."
         : "";
       setSuccess(
         "Campanha criada: " + result.eligible + " elegíveis, " + result.rejected +
@@ -478,6 +498,7 @@ function CampaignsPage({
       setConsentConfirmed(false);
       setDeliveryMode("now");
       setScheduledLocal("");
+      setScheduledEndLocal("");
       setImportedFileName(null);
       await refreshCampaigns();
     } catch (err) {
@@ -566,29 +587,41 @@ function CampaignsPage({
               <CalendarClock size={16}/>Programar envio
             </button>
           </div>
-          {deliveryMode === "scheduled" && <label className="grid gap-1.5 text-sm font-medium text-[#304237]">
-            Data e hora
-            <input
-              type="datetime-local"
-              min={minimumScheduleValue()}
-              value={scheduledLocal}
-              onChange={event => setScheduledLocal(event.target.value)}
-              className="h-11 rounded-xl border border-[#dfe7e1] bg-white px-3 outline-none focus:border-[#269451]"
-            />
-            <span className="text-[11px] font-normal text-[#829087]">
-              A fila ficará bloqueada até esse horário. Nenhuma mensagem desta campanha será liberada antes da hora programada.
+          {deliveryMode === "scheduled" && <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-sm font-medium text-[#304237]">
+              Início dos disparos
+              <input
+                type="datetime-local"
+                min={minimumScheduleValue()}
+                value={scheduledLocal}
+                onChange={event => setScheduledLocal(event.target.value)}
+                className="h-11 rounded-xl border border-[#dfe7e1] bg-white px-3 outline-none focus:border-[#269451]"
+              />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium text-[#304237]">
+              Término dos disparos
+              <input
+                type="datetime-local"
+                min={scheduledLocal || minimumScheduleValue()}
+                value={scheduledEndLocal}
+                onChange={event => setScheduledEndLocal(event.target.value)}
+                className="h-11 rounded-xl border border-[#dfe7e1] bg-white px-3 outline-none focus:border-[#269451]"
+              />
+            </label>
+            <span className="text-[11px] font-normal text-[#829087] sm:col-span-2">
+              Os contatos são distribuídos em round-robin entre todos os números conectados e espaçados ao longo da janela escolhida.
             </span>
-          </label>}
+          </div>}
         </div>
 
         <div className="grid gap-2 rounded-xl border border-[#dfe7e1] p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <span className="block text-sm font-medium text-[#304237]">Contatos para disparo</span>
-              <span className="text-[11px] text-[#829087]">Envie CSV, TXT ou TSV, com telefone ou Nome + telefone.</span>
+              <span className="block text-sm font-medium text-[#304237]">1. Carregar lista de contatos</span>
+              <span className="text-[11px] text-[#829087]">Selecione um TXT, CSV ou TSV. Um número por linha também funciona.</span>
             </div>
             <label className="btn btn-soft cursor-pointer">
-              <Upload size={15}/>{readingFile ? "Lendo arquivo..." : "Enviar arquivo de contatos"}
+              <Upload size={15}/>{readingFile ? "Lendo arquivo..." : "Carregar arquivo TXT/CSV"}
               <input
                 type="file"
                 accept=".txt,.csv,.tsv,text/plain,text/csv,text/tab-separated-values"
@@ -632,7 +665,9 @@ function CampaignsPage({
         </label>
 
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-          Proteção operacional: cada sessão envia no máximo 150 mensagens em uma janela de 24 horas. O excedente permanece na fila para depois.
+          <strong>Distribuição automática:</strong> contato 1 → número 1, contato 2 → número 2, contato 3 → número 3 e assim sucessivamente, reiniciando o ciclo.
+          Com {active.length} número(s) conectado(s), a capacidade teórica desta campanha é de até <strong>{theoreticalCapacity}</strong> mensagens,
+          respeitando o limite de 150 por sessão em 24 horas, opt-out e disponibilidade real das sessões.
         </div>
 
         <div className="flex justify-end">
@@ -693,7 +728,10 @@ function CampaignsPage({
                   <strong className="block text-sm text-[#2a3c30]">{campaign.name}</strong>
                   <span className="text-[11px] text-[#87958c]">
                     {campaign.eligible_recipients} elegíveis • {campaign.rejected_recipients} rejeitados
-                    {isScheduled ? " • Programada para " + new Date(campaign.scheduled_at as string).toLocaleString("pt-BR") : ""}
+                    {isScheduled
+                      ? " • Janela " + new Date(campaign.scheduled_at as string).toLocaleString("pt-BR") +
+                        (campaign.scheduled_end_at ? " até " + new Date(campaign.scheduled_end_at).toLocaleString("pt-BR") : "")
+                      : ""}
                   </span>
                 </div>
                 <StatusPill tone={campaign.status === "COMPLETED" ? "success" : campaign.status === "FAILED" ? "warning" : "neutral"}>
