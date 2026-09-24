@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, FileText, Gauge, Menu,
+  AlertTriangle, CalendarClock, CheckCircle2, ChevronDown, FileText, Gauge, Menu,
   MessageCircle, MoreHorizontal, Plus, RefreshCw, Send, ShieldCheck,
   Smartphone, Sparkles, Upload, Webhook, X, Zap,
 } from "lucide-react";
@@ -193,6 +193,95 @@ function Dashboard({
   </>;
 }
 
+
+type ParsedContact = { name?: string; phone: string };
+
+function splitContactLine(line: string, delimiter: string | null) {
+  if (!delimiter) return [line.trim()];
+  const values: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (char === "\"") {
+      if (quoted && line[index + 1] === "\"") {
+        current += "\"";
+        index++;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (char === delimiter && !quoted) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  values.push(current.trim());
+  return values;
+}
+
+function normalizeHeader(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function parseContactText(raw: string): { rows: ParsedContact[]; canonical: string } {
+  const lines = raw
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return { rows: [], canonical: "" };
+
+  const candidates = [";", "\t", ",", "|"];
+  const sample = lines[0];
+  const delimiter = candidates
+    .map(value => ({ value, count: sample.split(value).length - 1 }))
+    .sort((a, b) => b.count - a.count)[0];
+  const selectedDelimiter = delimiter?.count ? delimiter.value : null;
+
+  const firstFields = splitContactLine(lines[0], selectedDelimiter);
+  const normalizedHeaders = firstFields.map(normalizeHeader);
+  const phoneNames = new Set(["telefone", "phone", "celular", "whatsapp", "numero", "fone"]);
+  const nameNames = new Set(["nome", "name", "cliente", "contato"]);
+  const phoneHeaderIndex = normalizedHeaders.findIndex(value => phoneNames.has(value));
+  const nameHeaderIndex = normalizedHeaders.findIndex(value => nameNames.has(value));
+  const hasHeader = phoneHeaderIndex >= 0;
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+
+  const rows = dataLines
+    .map(line => {
+      const fields = splitContactLine(line, selectedDelimiter).map(value => value.trim());
+      if (!fields.length) return null;
+      const phoneIndex = hasHeader ? phoneHeaderIndex : Math.max(0, fields.length - 1);
+      const nameIndex = hasHeader ? nameHeaderIndex : fields.length > 1 ? 0 : -1;
+      const phone = (fields[phoneIndex] || "").trim();
+      const name = nameIndex >= 0 ? (fields[nameIndex] || "").trim() : "";
+      if (!phone) return null;
+      return name ? { name, phone } : { phone };
+    })
+    .filter((row): row is ParsedContact => Boolean(row));
+
+  return {
+    rows,
+    canonical: rows.map(row => row.name ? row.name + ";" + row.phone : row.phone).join("\n"),
+  };
+}
+
+function minimumScheduleValue() {
+  const date = new Date(Date.now() + 60_000);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 function CampaignsPage({
   accounts,
   organizationId,
@@ -207,6 +296,9 @@ function CampaignsPage({
   const [message, setMessage] = useState("");
   const [recipientText, setRecipientText] = useState("");
   const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [deliveryMode, setDeliveryMode] = useState<"now" | "scheduled">("now");
+  const [scheduledLocal, setScheduledLocal] = useState("");
+  const [importedFileName, setImportedFileName] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [saving, setSaving] = useState(false);
@@ -214,6 +306,7 @@ function CampaignsPage({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const parsedInput = useMemo(() => parseContactText(recipientText), [recipientText]);
   const safeTotal = Math.max(0, Math.min(Number.isFinite(previewTotal) ? previewTotal : 0, 5000));
   const allocation = active.length
     ? active.map((account, index) => ({
@@ -223,7 +316,7 @@ function CampaignsPage({
     : [];
   const values = allocation.map(item => item.jobs);
   const difference = values.length ? Math.max(...values) - Math.min(...values) : 0;
-  const inputLines = recipientText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).length;
+  const inputLines = parsedInput.rows.length;
 
   async function refreshCampaigns() {
     try {
@@ -249,21 +342,10 @@ function CampaignsPage({
   }, [organizationId]);
 
   function parseRecipients() {
-    return recipientText
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map(line => {
-        const parts = line.split(/[;,|\t]/).map(part => part.trim()).filter(Boolean);
-        if (parts.length >= 2) {
-          return {
-            name: parts[0],
-            phone: parts[parts.length - 1],
-            consent: consentConfirmed,
-          };
-        }
-        return { phone: line, consent: consentConfirmed };
-      });
+    return parsedInput.rows.map(row => ({
+      ...row,
+      consent: consentConfirmed,
+    }));
   }
 
   function applyTemplate(id: string) {
@@ -280,11 +362,31 @@ function CampaignsPage({
       setError("O arquivo deve ter no máximo 2 MB.");
       return;
     }
+
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".txt") && !lowerName.endsWith(".csv") && !lowerName.endsWith(".tsv")) {
+      setError("Envie um arquivo TXT, CSV ou TSV.");
+      return;
+    }
+
     setReadingFile(true);
     setError(null);
+    setSuccess(null);
     try {
       const text = await file.text();
-      setRecipientText(text.replace(/^\uFEFF/, ""));
+      const parsed = parseContactText(text);
+      if (!parsed.rows.length) {
+        setError("Nenhum contato foi encontrado no arquivo.");
+        return;
+      }
+      if (parsed.rows.length > 5000) {
+        setError("O arquivo possui mais de 5.000 contatos. Divida a lista em campanhas menores.");
+        return;
+      }
+      setRecipientText(parsed.canonical);
+      setPreviewTotal(parsed.rows.length);
+      setImportedFileName(file.name);
+      setSuccess(parsed.rows.length + " contato(s) importado(s) de " + file.name + ".");
     } catch {
       setError("Não foi possível ler o arquivo.");
     } finally {
@@ -295,6 +397,7 @@ function CampaignsPage({
   async function submitCampaign() {
     setError(null);
     setSuccess(null);
+
     if (!active.length) {
       setError("Conecte pelo menos um número antes de criar uma campanha.");
       return;
@@ -307,14 +410,15 @@ function CampaignsPage({
       setError("Escreva a mensagem da campanha.");
       return;
     }
+
     const unsupported = [...message.matchAll(/{{\s*([a-zA-Z0-9_]+)\s*}}/g)]
       .map(match => match[1].toLowerCase())
       .find(variable => !["nome", "telefone"].includes(variable));
     if (unsupported) {
-      setError(`Variável não suportada: {{${unsupported}}}. Use apenas {{nome}} e {{telefone}}.`);
+      setError("Variável não suportada: {{" + unsupported + "}}. Use apenas {{nome}} e {{telefone}}.");
       return;
     }
-    if (!recipientText.trim()) {
+    if (!parsedInput.rows.length) {
       setError("Cole ou importe pelo menos um destinatário.");
       return;
     }
@@ -324,13 +428,31 @@ function CampaignsPage({
     }
 
     const recipients = parseRecipients();
-    if (!recipients.length) {
-      setError("Nenhum destinatário válido informado.");
+    if (recipients.length > 5000) {
+      setError("Cada campanha aceita no máximo 5.000 contatos.");
       return;
     }
-    if (recipients.length > 5000) {
-      setError("Cada campanha aceita no máximo 5.000 linhas.");
-      return;
+
+    let scheduledAt: string | undefined;
+    if (deliveryMode === "scheduled") {
+      if (!scheduledLocal) {
+        setError("Escolha a data e a hora do envio.");
+        return;
+      }
+      const scheduledDate = new Date(scheduledLocal);
+      if (Number.isNaN(scheduledDate.getTime())) {
+        setError("Data de agendamento inválida.");
+        return;
+      }
+      if (scheduledDate.getTime() <= Date.now() + 30_000) {
+        setError("O agendamento precisa estar pelo menos 30 segundos no futuro.");
+        return;
+      }
+      if (scheduledDate.getTime() > Date.now() + 366 * 24 * 60 * 60 * 1000) {
+        setError("O agendamento deve estar dentro dos próximos 12 meses.");
+        return;
+      }
+      scheduledAt = scheduledDate.toISOString();
     }
 
     setSaving(true);
@@ -340,15 +462,23 @@ function CampaignsPage({
         name: name.trim(),
         message: message.trim(),
         recipients,
+        scheduledAt,
       });
+      const scheduleText = result.scheduledAt
+        ? " Programada para " + new Date(result.scheduledAt).toLocaleString("pt-BR") + "."
+        : "";
       setSuccess(
-        `Campanha criada: ${result.eligible} elegíveis, ${result.rejected} rejeitados e ${result.sessions} sessão(ões) participantes.`,
+        "Campanha criada: " + result.eligible + " elegíveis, " + result.rejected +
+        " rejeitados e " + result.sessions + " sessão(ões) participantes." + scheduleText,
       );
       setCreating(false);
       setName("");
       setMessage("");
       setRecipientText("");
       setConsentConfirmed(false);
+      setDeliveryMode("now");
+      setScheduledLocal("");
+      setImportedFileName(null);
       await refreshCampaigns();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível criar a campanha.");
@@ -362,7 +492,7 @@ function CampaignsPage({
       <div>
         <span className="eyebrow">Operação</span>
         <h1>Campanhas</h1>
-        <p>Fila persistente com divisão igualitária, personalização e controles de consentimento.</p>
+        <p>Importe contatos por arquivo, programe a data e hora e acompanhe a fila de envio.</p>
       </div>
       <button className="btn btn-primary" onClick={() => setCreating(true)}>
         <Plus size={17}/>Nova campanha
@@ -370,13 +500,14 @@ function CampaignsPage({
     </div>
 
     {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
-    {success && <div className="notice"><CheckCircle2 size={20}/><div><strong>Campanha adicionada à fila</strong><p>{success}</p></div></div>}
+    {success && <div className="notice"><CheckCircle2 size={20}/><div><strong>Operação concluída</strong><p>{success}</p></div></div>}
 
     {creating && <section className="panel mb-4">
       <div className="panel-title">
         <div><span className="eyebrow">Nova campanha</span><h2>Criar campanha</h2></div>
         <button className="btn btn-soft" onClick={() => setCreating(false)}><X size={16}/>Cancelar</button>
       </div>
+
       <div className="grid gap-4 p-4">
         {templates.length > 0 && <label className="grid gap-1.5 text-sm font-medium text-[#304237]">
           Usar template
@@ -415,28 +546,78 @@ function CampaignsPage({
           </span>
         </label>
 
-        <div className="grid gap-2">
+        <div className="grid gap-2 rounded-xl border border-[#dfe7e1] bg-[#fbfcfb] p-4">
+          <span className="text-sm font-medium text-[#304237]">Quando enviar</span>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              className={deliveryMode === "now" ? "btn btn-primary justify-center" : "btn btn-soft justify-center"}
+              aria-pressed={deliveryMode === "now"}
+              onClick={() => setDeliveryMode("now")}
+            >
+              <Send size={16}/>Enviar agora
+            </button>
+            <button
+              type="button"
+              className={deliveryMode === "scheduled" ? "btn btn-primary justify-center" : "btn btn-soft justify-center"}
+              aria-pressed={deliveryMode === "scheduled"}
+              onClick={() => setDeliveryMode("scheduled")}
+            >
+              <CalendarClock size={16}/>Programar envio
+            </button>
+          </div>
+          {deliveryMode === "scheduled" && <label className="grid gap-1.5 text-sm font-medium text-[#304237]">
+            Data e hora
+            <input
+              type="datetime-local"
+              min={minimumScheduleValue()}
+              value={scheduledLocal}
+              onChange={event => setScheduledLocal(event.target.value)}
+              className="h-11 rounded-xl border border-[#dfe7e1] bg-white px-3 outline-none focus:border-[#269451]"
+            />
+            <span className="text-[11px] font-normal text-[#829087]">
+              A fila ficará bloqueada até esse horário. Nenhuma mensagem desta campanha será liberada antes da hora programada.
+            </span>
+          </label>}
+        </div>
+
+        <div className="grid gap-2 rounded-xl border border-[#dfe7e1] p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-medium text-[#304237]">Destinatários</span>
+            <div>
+              <span className="block text-sm font-medium text-[#304237]">Contatos para disparo</span>
+              <span className="text-[11px] text-[#829087]">Envie CSV, TXT ou TSV, com telefone ou Nome + telefone.</span>
+            </div>
             <label className="btn btn-soft cursor-pointer">
-              <Upload size={15}/>{readingFile ? "Lendo..." : "Importar TXT/CSV"}
+              <Upload size={15}/>{readingFile ? "Lendo arquivo..." : "Enviar arquivo de contatos"}
               <input
                 type="file"
-                accept=".txt,.csv,text/plain,text/csv"
+                accept=".txt,.csv,.tsv,text/plain,text/csv,text/tab-separated-values"
                 className="hidden"
                 disabled={readingFile}
-                onChange={event => void importFile(event.target.files?.[0])}
+                onChange={event => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  void importFile(file);
+                }}
               />
             </label>
           </div>
+
+          {importedFileName && <div className="rounded-lg bg-[#eef8f1] px-3 py-2 text-xs text-[#287044]">
+            <strong>{importedFileName}</strong> carregado com {inputLines} contato(s).
+          </div>}
+
           <textarea
             className="min-h-44 rounded-xl border border-[#dfe7e1] p-3 font-mono text-xs outline-none focus:border-[#269451]"
             value={recipientText}
-            onChange={event => setRecipientText(event.target.value)}
+            onChange={event => {
+              setRecipientText(event.target.value);
+              setImportedFileName(null);
+            }}
             placeholder={"27999999999\nMaria;27988888888"}
           />
           <span className="text-[11px] text-[#829087]">
-            {inputLines} linha(s). Formato: telefone ou Nome;telefone. Máximo de 5.000 linhas por campanha.
+            {inputLines} contato(s) reconhecido(s). Cabeçalhos como nome, telefone, celular, WhatsApp e phone são detectados automaticamente.
           </span>
         </div>
 
@@ -456,7 +637,7 @@ function CampaignsPage({
 
         <div className="flex justify-end">
           <button className="btn btn-primary" disabled={saving} onClick={() => void submitCampaign()}>
-            {saving ? "Criando..." : "Criar e enfileirar campanha"}
+            {saving ? "Salvando..." : deliveryMode === "scheduled" ? "Programar campanha" : "Criar e enfileirar campanha"}
           </button>
         </div>
       </div>
@@ -503,16 +684,24 @@ function CampaignsPage({
       </div>
       {campaigns.length
         ? <div className="grid gap-2 p-4">
-            {campaigns.slice(0, 20).map(campaign => <div key={campaign.id} className="grid gap-2 rounded-xl border border-[#e5ebe6] p-4 sm:grid-cols-[1fr_auto_auto] sm:items-center">
-              <div>
-                <strong className="block text-sm text-[#2a3c30]">{campaign.name}</strong>
-                <span className="text-[11px] text-[#87958c]">{campaign.eligible_recipients} elegíveis • {campaign.rejected_recipients} rejeitados</span>
-              </div>
-              <StatusPill tone={campaign.status === "COMPLETED" ? "success" : campaign.status === "FAILED" ? "warning" : "neutral"}>
-                {campaign.status}
-              </StatusPill>
-              <span className="text-xs text-[#526158]">{campaign.sent_count} enviadas • {campaign.failed_count} falhas • {campaign.canceled_count || 0} canceladas</span>
-            </div>)}
+            {campaigns.slice(0, 20).map(campaign => {
+              const isScheduled = Boolean(
+                campaign.scheduled_at && new Date(campaign.scheduled_at).getTime() > Date.now() + 1000,
+              );
+              return <div key={campaign.id} className="grid gap-2 rounded-xl border border-[#e5ebe6] p-4 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                <div>
+                  <strong className="block text-sm text-[#2a3c30]">{campaign.name}</strong>
+                  <span className="text-[11px] text-[#87958c]">
+                    {campaign.eligible_recipients} elegíveis • {campaign.rejected_recipients} rejeitados
+                    {isScheduled ? " • Programada para " + new Date(campaign.scheduled_at as string).toLocaleString("pt-BR") : ""}
+                  </span>
+                </div>
+                <StatusPill tone={campaign.status === "COMPLETED" ? "success" : campaign.status === "FAILED" ? "warning" : "neutral"}>
+                  {isScheduled ? "PROGRAMADA" : campaign.status}
+                </StatusPill>
+                <span className="text-xs text-[#526158]">{campaign.sent_count} enviadas • {campaign.failed_count} falhas • {campaign.canceled_count || 0} canceladas</span>
+              </div>;
+            })}
           </div>
         : <EmptyState icon={Send} title="Nenhuma campanha criada" description="Crie a primeira campanha depois de conectar um número e validar seus contatos."/>}
     </section>

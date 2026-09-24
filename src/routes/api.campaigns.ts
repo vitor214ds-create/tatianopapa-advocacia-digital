@@ -48,7 +48,32 @@ export const Route = createFileRoute("/api/campaigns")({
             { headers },
           );
           if (!response.ok) throw new Error(`Falha ao carregar campanhas: ${await response.text()}`);
-          return Response.json({ ok: true, campaigns: await response.json() });
+          const campaigns = await response.json() as Array<{
+            id: string;
+            status: string;
+            created_at: string;
+            [key: string]: unknown;
+          }>;
+
+          const campaignsWithSchedule = await Promise.all(
+            campaigns.map(async (campaign, index) => {
+              if (index >= 20 || campaign.status !== "QUEUED") return campaign;
+              try {
+                const jobsResponse = await fetch(
+                  `${url}/rest/v1/zapflow_message_jobs?organization_id=eq.${encodeURIComponent(organizationId)}&campaign_id=eq.${encodeURIComponent(campaign.id)}&status=in.(QUEUED,RETRY)&select=next_attempt_at&order=next_attempt_at.asc&limit=1`,
+                  { headers },
+                );
+                if (!jobsResponse.ok) return campaign;
+                const jobs = await jobsResponse.json() as Array<{ next_attempt_at?: string | null }>;
+                const scheduledAt = jobs[0]?.next_attempt_at || null;
+                return scheduledAt ? { ...campaign, scheduled_at: scheduledAt } : campaign;
+              } catch {
+                return campaign;
+              }
+            }),
+          );
+
+          return Response.json({ ok: true, campaigns: campaignsWithSchedule });
         } catch (error) {
           if (error instanceof Response) return error;
           return Response.json(
@@ -69,6 +94,7 @@ export const Route = createFileRoute("/api/campaigns")({
             name?: string;
             message?: string;
             recipients?: QueueRecipient[];
+            scheduledAt?: string;
           };
           try {
             body = JSON.parse(raw);
@@ -102,6 +128,22 @@ export const Route = createFileRoute("/api/campaigns")({
             );
           }
 
+          if (body.scheduledAt !== undefined) {
+            if (typeof body.scheduledAt !== "string" || body.scheduledAt.length > 64) {
+              return Response.json({ error: "Data de agendamento inválida" }, { status: 400 });
+            }
+            const scheduledTimestamp = Date.parse(body.scheduledAt);
+            if (!Number.isFinite(scheduledTimestamp)) {
+              return Response.json({ error: "Data de agendamento inválida" }, { status: 400 });
+            }
+            if (scheduledTimestamp < Date.now() - 60_000) {
+              return Response.json({ error: "A data de agendamento já passou" }, { status: 400 });
+            }
+            if (scheduledTimestamp > Date.now() + 366 * 24 * 60 * 60 * 1000) {
+              return Response.json({ error: "O agendamento deve estar dentro dos próximos 12 meses" }, { status: 400 });
+            }
+          }
+
           const invalidRecipient = body.recipients.some(recipient =>
             !recipient ||
             typeof recipient !== "object" ||
@@ -124,6 +166,7 @@ export const Route = createFileRoute("/api/campaigns")({
             message: body.message.trim(),
             recipients: body.recipients,
             createdBy: user.userId,
+            scheduledAt: body.scheduledAt,
           });
 
           return Response.json({ ok: true, status: "QUEUED", ...queued }, { status: 201 });

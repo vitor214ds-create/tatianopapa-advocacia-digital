@@ -210,6 +210,17 @@ async function testDashboard(browser, mobile = false) {
     await page.getByRole("button", { name: "Nova campanha", exact: true }).click();
     await page.getByText("Criar e enfileirar campanha").waitFor();
 
+    const contactFile = page.locator('input[type="file"]').first();
+    await contactFile.setInputFiles({
+      name: "contatos.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from("nome;telefone\nMaria;27999999999"),
+    });
+    await page.getByText(/1 contato\(s\) importado\(s\)/i).waitFor();
+    await page.getByRole("button", { name: "Programar envio", exact: true }).click();
+    await page.locator('input[type="datetime-local"]').waitFor({ state: "visible" });
+    console.log("PASS campaign CSV import + schedule controls");
+
     await clickSection(page, "Templates");
     const newTemplate = page.getByRole("button", { name: /Novo template/i }).first();
     if (await newTemplate.count()) {

@@ -33,6 +33,7 @@ export type Campaign = {
   canceled_count?: number;
   started_at?: string | null;
   completed_at?: string | null;
+  scheduled_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -139,8 +140,9 @@ export async function createCampaign(input: {
   name: string;
   message: string;
   recipients: Array<{ id?: string; name?: string; phone: string; consent: boolean; suppressed?: boolean }>;
+  scheduledAt?: string;
 }) {
-  return json<{ ok: true; status: string; campaignId: string; eligible: number; rejected: number; sessions: number }>(await protectedFetch("/api/campaigns", {
+  return json<{ ok: true; status: string; campaignId: string; eligible: number; rejected: number; sessions: number; scheduledAt?: string | null }>(await protectedFetch("/api/campaigns", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

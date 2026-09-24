@@ -182,6 +182,17 @@ function perSessionGapMs() {
     : 15000;
 }
 
+export function resolveCampaignStart(scheduledAt?: string, now = Date.now()) {
+  if (!scheduledAt) return now;
+  const parsed = Date.parse(scheduledAt);
+  if (!Number.isFinite(parsed)) throw new Error("Data de agendamento inválida");
+  if (parsed < now - 60_000) throw new Error("A data de agendamento já passou");
+  if (parsed > now + 366 * 24 * 60 * 60 * 1000) {
+    throw new Error("O agendamento deve estar dentro dos próximos 12 meses");
+  }
+  return Math.max(parsed, now);
+}
+
 export async function createQueuedCampaign(
   request: Request,
   input: {
@@ -190,6 +201,7 @@ export async function createQueuedCampaign(
     message: string;
     createdBy: string;
     recipients: QueueRecipient[];
+    scheduledAt?: string;
   },
 ) {
   const prepared = prepareRecipients(input.recipients);
@@ -209,7 +221,7 @@ export async function createQueuedCampaign(
   const headers = userHeaders(request);
 
   const gap = perSessionGapMs();
-  const startedAt = Date.now();
+  const startedAt = resolveCampaignStart(input.scheduledAt);
 
   const jobs = allocations.map(({ recipient, session, sessionSequence }) => ({
     whatsapp_account_id: session.id,
@@ -260,6 +272,7 @@ export async function createQueuedCampaign(
     sessions: sessions.length,
     allocation,
     perSessionGapMs: gap,
+    scheduledAt: input.scheduledAt ? new Date(startedAt).toISOString() : null,
   };
 }
 

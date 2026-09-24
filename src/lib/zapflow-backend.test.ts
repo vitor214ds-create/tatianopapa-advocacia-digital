@@ -4,6 +4,7 @@ import {
   normalizePhone,
   prepareRecipients,
   renderRecipientMessage,
+  resolveCampaignStart,
 } from "./campaign-queue-server";
 import { normalizeEvolutionBaseUrl } from "./gateway/evolution";
 
@@ -96,5 +97,23 @@ describe("campaign template rendering", () => {
         { phone: "27999999999", normalizedPhone: "5527999999999", consent: true },
       ),
     ).toThrow("Variável de template não suportada");
+  });
+});
+
+
+describe("campaign scheduling", () => {
+  test("keeps immediate campaigns at the current time", () => {
+    expect(resolveCampaignStart(undefined, 1_000)).toBe(1_000);
+  });
+
+  test("uses the requested future time as the first queue release", () => {
+    expect(resolveCampaignStart("2026-10-01T15:00:00.000Z", Date.parse("2026-10-01T12:00:00.000Z")))
+      .toBe(Date.parse("2026-10-01T15:00:00.000Z"));
+  });
+
+  test("rejects expired and excessively distant schedules", () => {
+    const now = Date.parse("2026-10-01T12:00:00.000Z");
+    expect(() => resolveCampaignStart("2026-10-01T11:00:00.000Z", now)).toThrow("já passou");
+    expect(() => resolveCampaignStart("2028-10-01T12:00:00.000Z", now)).toThrow("12 meses");
   });
 });
