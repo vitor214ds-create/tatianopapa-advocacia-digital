@@ -5,6 +5,7 @@ import {
   normalizeEvolutionBaseUrl,
   sendText,
   sendWhatsAppAudio,
+  setInstanceWebhook,
   type EvolutionConfig,
 } from "../lib/gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
@@ -33,7 +34,16 @@ function supabase(request: Request) {
   };
 }
 
+function environmentGatewayConfig(): EvolutionConfig | null {
+  const baseUrl = normalizeEvolutionBaseUrl(runtimeEnv("EVOLUTION_API_URL"));
+  const apiKey = runtimeEnv("EVOLUTION_API_KEY")?.trim();
+  return baseUrl && apiKey ? { baseUrl, apiKey } : null;
+}
+
 async function gatewayConfig(request: Request, organizationId: string): Promise<EvolutionConfig> {
+  const environment = environmentGatewayConfig();
+  if (environment) return environment;
+
   const { url, headers } = supabase(request);
   const response = await fetch(`${url}/rest/v1/rpc/get_evolution_gateway_config`, {
     method: "POST",
@@ -42,10 +52,74 @@ async function gatewayConfig(request: Request, organizationId: string): Promise<
   });
   if (!response.ok) throw new Error("Não foi possível carregar a configuração da Evolution");
   const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
-  const baseUrl = normalizeEvolutionBaseUrl(rows[0]?.base_url || runtimeEnv("EVOLUTION_API_URL"));
-  const apiKey = rows[0]?.api_key || runtimeEnv("EVOLUTION_API_KEY");
+  const baseUrl = normalizeEvolutionBaseUrl(rows[0]?.base_url);
+  const apiKey = rows[0]?.api_key?.trim();
   if (!baseUrl || !apiKey) throw new Error("Gateway Evolution ainda não configurado.");
   return { baseUrl, apiKey };
+}
+
+async function webhookSecret(request: Request, organizationId: string) {
+  const { url, headers } = supabase(request);
+  const response = await fetch(`${url}/rest/v1/rpc/get_or_create_evolution_webhook_secret`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ p_organization_id: organizationId }),
+  });
+  if (!response.ok) {
+    throw new Error("Não foi possível preparar o recebimento das mensagens do WhatsApp.");
+  }
+  const secret = await response.json() as string;
+  if (!secret || secret.length < 32) {
+    throw new Error("Segredo do webhook do WhatsApp inválido.");
+  }
+  return secret;
+}
+
+const webhookSyncCache = new Map<string, number>();
+
+async function ensureInboundWebhook(request: Request, organizationId: string) {
+  const now = Date.now();
+  const lastSync = webhookSyncCache.get(organizationId) || 0;
+  if (now - lastSync < 60_000) return true;
+
+  const { url, headers } = supabase(request);
+  const accountsResponse = await fetch(
+    `${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&is_enabled=eq.true&connection_status=eq.CONNECTED&select=session_id`,
+    { headers },
+  );
+  if (!accountsResponse.ok) return false;
+
+  const accounts = await accountsResponse.json() as Array<{ session_id?: string | null }>;
+  const sessions = accounts.map(item => item.session_id).filter((value): value is string => Boolean(value));
+  if (!sessions.length) return false;
+
+  const config = await gatewayConfig(request, organizationId);
+  const secret = await webhookSecret(request, organizationId);
+  const origin = new URL(request.url).origin;
+
+  const results = await Promise.all(
+    sessions.map(async sessionId => {
+      try {
+        await setInstanceWebhook(
+          sessionId,
+          `${origin}/api/gateway-webhook`,
+          {
+            "x-zapflow-organization-id": organizationId,
+            "x-zapflow-webhook-secret": secret,
+          },
+          config,
+        );
+        return true;
+      } catch (error) {
+        console.error("Falha ao sincronizar webhook do Chat", sessionId, error);
+        return false;
+      }
+    }),
+  );
+
+  const ready = results.length > 0 && results.every(Boolean);
+  if (ready) webhookSyncCache.set(organizationId, now);
+  return ready;
 }
 
 async function threadForOrg(request: Request, organizationId: string, threadId: string) {
@@ -134,6 +208,13 @@ export const Route = createFileRoute("/api/chat")({
           const { url, headers } = supabase(request);
 
           if (action === "threads") {
+            let webhookReady = false;
+            try {
+              webhookReady = await ensureInboundWebhook(request, organizationId);
+            } catch (error) {
+              console.error("Falha ao preparar recebimento do Chat", error);
+            }
+
             const select = encodeURIComponent(
               "id,organization_id,whatsapp_account_id,session_id,contact_phone,contact_name,remote_jid,last_message_preview,last_message_at,last_direction,unread_count",
             );
@@ -153,6 +234,7 @@ export const Route = createFileRoute("/api/chat")({
 
             return Response.json({
               ok: true,
+              webhookReady,
               threads: threads.map(thread => ({
                 ...thread,
                 account_name: accountMap.get(thread.whatsapp_account_id)?.internal_name || null,
