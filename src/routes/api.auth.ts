@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
+import { cookieValue, isJsonObject } from "../lib/request-utils";
 
 const ACCESS_COOKIE = "zapflow_access_token";
 const REFRESH_COOKIE = "zapflow_refresh_token";
@@ -51,18 +52,10 @@ function consumeLoginBucket(key: string, limit: number, windowMs: number) {
 }
 
 function parseCookies(request: Request) {
-  const header = request.headers.get("cookie") || "";
-  const entries = header
-    .split(";")
-    .map(part => part.trim())
-    .filter(Boolean)
-    .map(part => {
-      const index = part.indexOf("=");
-      return index === -1
-        ? [part, ""]
-        : [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
-    });
-  return Object.fromEntries(entries) as Record<string, string>;
+  return {
+    [ACCESS_COOKIE]: cookieValue(request, ACCESS_COOKIE),
+    [REFRESH_COOKIE]: cookieValue(request, REFRESH_COOKIE),
+  };
 }
 
 function isProduction() {
@@ -95,7 +88,8 @@ async function getProfile(accessToken: string) {
     headers,
     signal: AbortSignal.timeout(10_000),
   });
-  if (!userResponse.ok) return null;
+  if (userResponse.status === 401 || userResponse.status === 403) return null;
+  if (!userResponse.ok) throw new Error("Serviço de autenticação indisponível");
 
   const user = await userResponse.json() as { id: string; email?: string };
   const membershipResponse = await fetch(
@@ -124,7 +118,8 @@ async function refreshSession(refreshToken: string): Promise<SessionPayload | nu
     signal: AbortSignal.timeout(10_000),
   });
 
-  if (!response.ok) return null;
+  if (response.status === 400 || response.status === 401 || response.status === 403) return null;
+  if (!response.ok) throw new Error("Não foi possível renovar a sessão agora");
   return await response.json() as SessionPayload;
 }
 
@@ -173,7 +168,7 @@ export const Route = createFileRoute("/api/auth")({
           return noStore(response);
         } catch (error) {
           console.error("Auth GET failed", error);
-          return noStore(Response.json({ authenticated: false }, { status: 401 }));
+          return noStore(Response.json({ error: "Não foi possível verificar sua sessão agora. Tente novamente." }, { status: 503 }));
         }
       },
 
@@ -193,6 +188,10 @@ export const Route = createFileRoute("/api/auth")({
           body = JSON.parse(raw);
         } catch {
           return noStore(Response.json({ error: "JSON inválido" }, { status: 400 }));
+        }
+
+        if (!isJsonObject(body)) {
+          return noStore(Response.json({ error: "O corpo da requisição deve ser um objeto JSON" }, { status: 400 }));
         }
 
         if (body.action === "logout") {
@@ -221,7 +220,7 @@ export const Route = createFileRoute("/api/auth")({
           body.action !== "login" ||
           typeof body.email !== "string" ||
           typeof body.password !== "string" ||
-          !body.email ||
+          !body.email.trim() ||
           !body.password
         ) {
           return noStore(Response.json({ error: "E-mail e senha são obrigatórios" }, { status: 400 }));
@@ -260,6 +259,12 @@ export const Route = createFileRoute("/api/auth")({
 
           if (!loginResponse.ok) {
             console.error("Supabase password login failed", loginResponse.status, await loginResponse.text());
+            if (loginResponse.status === 429) {
+              return noStore(Response.json({ error: "Muitas tentativas. Aguarde e tente novamente." }, { status: 429 }));
+            }
+            if (loginResponse.status >= 500) {
+              return noStore(Response.json({ error: "O serviço de autenticação está indisponível. Tente novamente." }, { status: 503 }));
+            }
             return noStore(Response.json({ error: "E-mail ou senha inválidos" }, { status: 401 }));
           }
 

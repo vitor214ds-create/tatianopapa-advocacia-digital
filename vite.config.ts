@@ -1,33 +1,12 @@
-// @lovable.dev/vite-tanstack-config includes TanStack Start, React,
-// Tailwind, tsconfig paths, env injection and Nitro support.
+// The Lovable preset supplies TanStack Start, React, Tailwind and Nitro.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 const isRailway = Boolean(
-  process.env.RAILWAY_ENVIRONMENT ||
-  process.env.RAILWAY_PROJECT_ID ||
-  process.env.RAILWAY_SERVICE_ID
+  process.env["RAILWAY_ENVIRONMENT"] ||
+  process.env["RAILWAY_PROJECT_ID"] ||
+  process.env["RAILWAY_SERVICE_ID"]
 );
 
 export default defineConfig({
-  ...(isRailway
-    ? {
-        nitro: {
-          preset: "node-server",
-          routeRules: {
-            "/": {
-              headers: {
-                "cache-control": "no-store, max-age=0, must-revalidate",
-                pragma: "no-cache",
-              },
-            },
-            "/login": {
-              headers: {
-                "cache-control": "no-store, max-age=0, must-revalidate",
-                pragma: "no-cache",
-              },
-            },
-          },
-        },
-      }
-    : {}),
+  ...(isRailway ? { nitro: { preset: "node-server" } } : {}),
 });

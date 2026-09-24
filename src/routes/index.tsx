@@ -1,13 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, FileText, Gauge, Menu,
+  AlertTriangle, CheckCircle2, FileText, Gauge, Menu,
   MessageCircle, MoreHorizontal, Plus, RefreshCw, Send, ShieldCheck,
   Smartphone, Sparkles, Upload, Webhook, X, Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { WhatsAppSessionManager } from "../components/whatsapp-session-manager";
 import { TemplatesPage } from "../components/templates-page";
 import {
+  accountConnected,
+  ApiError,
   createCampaign,
   getAuthState,
   getDashboardMetrics,
@@ -22,6 +24,8 @@ import {
 } from "../lib/zapflow-api";
 
 export const Route = createFileRoute("/")({ component: ZapFlowApp });
+
+import { parseRecipientText } from "../lib/recipient-import";
 
 type Section = "Dashboard" | "Campanhas" | "Templates" | "WhatsApp";
 
@@ -83,13 +87,6 @@ function EmptyState({
   </div>;
 }
 
-function accountConnected(account: WhatsAppAccount) {
-  const state = String(
-    account.connection_status || account.session_status || account.status || "",
-  ).toUpperCase();
-  return state === "CONNECTED" || state === "OPEN";
-}
-
 function Dashboard({
   connected,
   organizationId,
@@ -108,14 +105,16 @@ function Dashboard({
     replies24h: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
     try {
       const response = await getDashboardMetrics(organizationId);
       setMetrics(response.metrics);
-    } catch {
-      // The rest of the dashboard remains usable even if metrics are temporarily unavailable.
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível atualizar os indicadores.");
     } finally {
       setLoading(false);
     }
@@ -140,11 +139,12 @@ function Dashboard({
       </div>
     </div>
 
-    <div className="metrics-grid">
+    {error && <div role="alert" className="notice"><AlertTriangle size={20}/><div><strong>Indicadores indisponíveis</strong><p>{error}</p></div></div>}
+    <div className="metrics-grid" aria-busy={loading}>
       <Metric label="Números conectados" value={`${connected}/10`} helper="Sessões confirmadas agora" icon={Smartphone}/>
-      <Metric label="Enviadas 24h" value={String(metrics.sent24h)} helper="Mensagens confirmadas como SENT" icon={Send}/>
-      <Metric label="Respostas 24h" value={String(metrics.replies24h)} helper="Mensagens recebidas pelo webhook" icon={MessageCircle}/>
-      <Metric label="Fila pendente" value={String(metrics.pending)} helper={metrics.failed24h ? `${metrics.failed24h} falha(s) nas últimas 24h` : "Sem falhas nas últimas 24h"} icon={AlertTriangle}/>
+      <Metric label="Enviadas 24h" value={loading || error ? "—" : String(metrics.sent24h)} helper="Mensagens confirmadas como SENT" icon={Send}/>
+      <Metric label="Respostas 24h" value={loading || error ? "—" : String(metrics.replies24h)} helper="Mensagens recebidas pelo webhook" icon={MessageCircle}/>
+      <Metric label="Fila pendente" value={loading || error ? "—" : String(metrics.pending)} helper={error ? "Atualize para consultar os dados" : metrics.failed24h ? `${metrics.failed24h} falha(s) nas últimas 24h` : "Sem falhas nas últimas 24h"} icon={AlertTriangle}/>
     </div>
 
     <div className="dashboard-grid">
@@ -186,7 +186,7 @@ function Dashboard({
         <div className="health-lines">
           <span><i className="dot ok"/>Autenticação</span>
           <span><i className={connected ? "dot ok" : "dot wait"}/>WhatsApp</span>
-          <span><i className="dot ok"/>Worker e fila</span>
+          <span><i className={loading || error ? "dot wait" : "dot ok"}/>Consulta da fila</span>
         </div>
       </section>
     </div>
@@ -196,13 +196,15 @@ function Dashboard({
 function CampaignsPage({
   accounts,
   organizationId,
+  startCreating = false,
 }: {
   accounts: WhatsAppAccount[];
   organizationId: string;
+  startCreating?: boolean;
 }) {
   const active = accounts.filter(accountConnected);
   const [previewTotal, setPreviewTotal] = useState(103);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(startCreating);
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [recipientText, setRecipientText] = useState("");
@@ -214,7 +216,7 @@ function CampaignsPage({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const safeTotal = Math.max(0, Math.min(Number.isFinite(previewTotal) ? previewTotal : 0, 5000));
+  const safeTotal = Math.floor(Math.max(0, Math.min(Number.isFinite(previewTotal) ? previewTotal : 0, 5000)));
   const allocation = active.length
     ? active.map((account, index) => ({
         account,
@@ -223,12 +225,13 @@ function CampaignsPage({
     : [];
   const values = allocation.map(item => item.jobs);
   const difference = values.length ? Math.max(...values) - Math.min(...values) : 0;
-  const inputLines = recipientText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).length;
+  const inputLines = parseRecipientText(recipientText, consentConfirmed).length;
 
   async function refreshCampaigns() {
     try {
       const response = await listCampaigns(organizationId);
       setCampaigns(response.campaigns || []);
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível carregar campanhas.");
     }
@@ -249,21 +252,7 @@ function CampaignsPage({
   }, [organizationId]);
 
   function parseRecipients() {
-    return recipientText
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map(line => {
-        const parts = line.split(/[;,|\t]/).map(part => part.trim()).filter(Boolean);
-        if (parts.length >= 2) {
-          return {
-            name: parts[0],
-            phone: parts[parts.length - 1],
-            consent: consentConfirmed,
-          };
-        }
-        return { phone: line, consent: consentConfirmed };
-      });
+    return parseRecipientText(recipientText, consentConfirmed);
   }
 
   function applyTemplate(id: string) {
@@ -375,7 +364,7 @@ function CampaignsPage({
     {creating && <section className="panel mb-4">
       <div className="panel-title">
         <div><span className="eyebrow">Nova campanha</span><h2>Criar campanha</h2></div>
-        <button className="btn btn-soft" onClick={() => setCreating(false)}><X size={16}/>Cancelar</button>
+        <button className="btn btn-soft" disabled={saving} onClick={() => setCreating(false)}><X size={16}/>Cancelar</button>
       </div>
       <div className="grid gap-4 p-4">
         {templates.length > 0 && <label className="grid gap-1.5 text-sm font-medium text-[#304237]">
@@ -425,11 +414,12 @@ function CampaignsPage({
                 accept=".txt,.csv,text/plain,text/csv"
                 className="hidden"
                 disabled={readingFile}
-                onChange={event => void importFile(event.target.files?.[0])}
+                onChange={event => { void importFile(event.target.files?.[0]); event.target.value = ""; }}
               />
             </label>
           </div>
           <textarea
+            aria-label="Destinatários"
             className="min-h-44 rounded-xl border border-[#dfe7e1] p-3 font-mono text-xs outline-none focus:border-[#269451]"
             value={recipientText}
             onChange={event => setRecipientText(event.target.value)}
@@ -475,7 +465,7 @@ function CampaignsPage({
             min={0}
             max={5000}
             value={previewTotal}
-            onChange={event => setPreviewTotal(Math.max(0, Math.min(5000, Number(event.target.value) || 0)))}
+            onChange={event => setPreviewTotal(Math.floor(Math.max(0, Math.min(5000, Number(event.target.value) || 0))))}
             className="h-10 w-44 rounded-xl border border-[#dfe7e1] px-3 text-sm outline-none"
           />
         </label>
@@ -523,6 +513,11 @@ function ZapFlowApp() {
   const navigateRouter = useNavigate();
   const [section, setSection] = useState<Section>("Dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [campaignComposer, setCampaignComposer] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authAttempt, setAuthAttempt] = useState(0);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [role, setRole] = useState("OWNER");
@@ -532,46 +527,71 @@ function ZapFlowApp() {
   const connected = accounts.filter(accountConnected).length;
 
   useEffect(() => {
-    getAuthState()
-      .then(async auth => {
-        if (!auth.activeOrganizationId) {
-          navigateRouter({ to: "/login" });
-          return;
-        }
-        setOrganizationId(auth.activeOrganizationId);
-        setEmail(auth.user.email);
-        setRole(auth.memberships.find(member => member.organization_id === auth.activeOrganizationId)?.role || "MEMBER");
-        try {
-          const response = await listWhatsAppAccounts(auth.activeOrganizationId);
-          setAccounts(response.accounts || []);
-        } catch {
-          // WhatsApp page will display the detailed gateway error.
-        }
+    let active = true;
+    setLoadingAuth(true);
+    setAuthError(null);
+    getAuthState().then(auth => {
+      if (!active) return;
+      if (!auth.authenticated || !auth.activeOrganizationId) {
+        void navigateRouter({ to: "/login", replace: true });
+        return;
+      }
+      setOrganizationId(auth.activeOrganizationId);
+      setEmail(auth.user.email);
+      setRole(auth.memberships.find(member => member.organization_id === auth.activeOrganizationId)?.role || "MEMBER");
+      setLoadingAuth(false);
+    }).catch(error => {
+      if (!active) return;
+      if (error instanceof ApiError && error.status === 401) {
+        void navigateRouter({ to: "/login", replace: true });
+      } else {
+        setAuthError(error instanceof Error ? error.message : "Não foi possível carregar sua conta.");
         setLoadingAuth(false);
-      })
-      .catch(() => navigateRouter({ to: "/login" }));
-  }, [navigateRouter]);
+      }
+    });
+    const expire = () => { void navigateRouter({ to: "/login", replace: true }); };
+    window.addEventListener("zapflow:session-expired", expire);
+    return () => { active = false; window.removeEventListener("zapflow:session-expired", expire); };
+  }, [navigateRouter, authAttempt]);
 
-  async function refreshAccounts() {
+  const handleAccountsChange = useCallback((next: WhatsAppAccount[]) => {
+    setAccounts(next);
+    setAccountsError(null);
+  }, []);
+
+  const refreshAccounts = useCallback(async () => {
     if (!organizationId) return;
     try {
       const response = await listWhatsAppAccounts(organizationId);
-      setAccounts(response.accounts || []);
-    } catch {
-      // Keep the latest known state and let the dedicated page surface the error.
+      handleAccountsChange(response.accounts || []);
+    } catch (error) {
+      setAccountsError(error instanceof Error ? error.message : "Não foi possível atualizar as sessões.");
     }
-  }
+  }, [organizationId, handleAccountsChange]);
+
+  useEffect(() => { void refreshAccounts(); }, [refreshAccounts]);
 
   async function signOut() {
-    await logout().catch(() => undefined);
-    navigateRouter({ to: "/login" });
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await logout();
+      void navigateRouter({ to: "/login", replace: true });
+    } catch (error) {
+      setAccountsError(error instanceof Error ? error.message : "Não foi possível sair. Tente novamente.");
+    } finally { setSigningOut(false); }
   }
 
   const navigate = (label: Section) => {
     setSection(label);
     setMobileOpen(false);
+    if (label !== "Campanhas") setCampaignComposer(false);
     if (label !== "WhatsApp") void refreshAccounts();
   };
+
+  if (authError) {
+    return <main className="grid min-h-screen place-items-center bg-[#f4f7f4] p-6 text-[#526158]"><div className="max-w-md text-center"><h1 className="text-xl font-semibold">Não foi possível abrir sua conta</h1><p role="alert" className="my-4">{authError}</p><button className="btn btn-primary" onClick={() => setAuthAttempt(value => value + 1)}>Tentar novamente</button></div></main>;
+  }
 
   if (loadingAuth) {
     return <main className="grid min-h-screen place-items-center bg-[#f4f7f4] text-[#526158]">
@@ -580,7 +600,7 @@ function ZapFlowApp() {
   }
   if (!organizationId) return null;
 
-  const initials = (email || "ZF").split("@")[0].slice(0, 2).toUpperCase();
+  const initials = (email || "ZF").split("@")[0]!.slice(0, 2).toUpperCase();
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
@@ -592,11 +612,11 @@ function ZapFlowApp() {
       <div className="workspace-switch">
         <div className="workspace-avatar">Z</div>
         <div><span>Workspace</span><strong>ZapFlow</strong></div>
-        <ChevronDown size={16}/>
+
       </div>
 
       <nav>
-        {nav.map(({ label, icon: Icon }) => <button key={label} className={section === label ? "active" : ""} onClick={() => navigate(label)}>
+        {nav.map(({ label, icon: Icon }) => <button key={label} className={section === label ? "active" : ""} aria-current={section === label ? "page" : undefined} onClick={() => navigate(label)}>
           <Icon size={18}/><span>{label}</span>
         </button>)}
       </nav>
@@ -608,7 +628,7 @@ function ZapFlowApp() {
           <span>{connected ? `${connected} número(s) conectado(s) ao gateway.` : "Nenhum número conectado. Gere um novo QR antes de enviar."}</span>
           <button onClick={() => navigate("WhatsApp")}>Gerenciar sessões</button>
         </div>
-        <button className="account-row" onClick={() => void signOut()} title="Sair">
+        <button className="account-row" disabled={signingOut} onClick={() => void signOut()} title="Sair">
           <div className="avatar">{initials}</div>
           <div><strong>{email || "Minha conta"}</strong><span>{role} • clique para sair</span></div>
           <MoreHorizontal size={17}/>
@@ -621,25 +641,26 @@ function ZapFlowApp() {
     <main className="main-area">
       <header className="topbar">
         <div className="topbar-left">
-          <button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu size={21}/></button>
+          <button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Abrir menu" aria-expanded={mobileOpen}><Menu size={21}/></button>
           <div><span>ZapFlow</span><strong>{title}</strong></div>
         </div>
         <div className="topbar-actions">
           <StatusPill tone={connected ? "success" : "warning"}>{connected ? `${connected} conectado(s)` : "WhatsApp desconectado"}</StatusPill>
-          <button className="profile-btn" onClick={() => void signOut()} title="Sair">{initials}</button>
+          <button className="profile-btn" disabled={signingOut} aria-label="Sair da conta" onClick={() => void signOut()} title="Sair">{initials}</button>
         </div>
       </header>
 
       <div className="content-wrap">
+        {accountsError && <div role="alert" className="notice"><AlertTriangle size={20}/><div><strong>Não foi possível atualizar as sessões</strong><p>{accountsError}</p><button className="btn btn-soft" onClick={() => void refreshAccounts()}>Tentar novamente</button></div></div>}
         {section === "Dashboard" && <Dashboard
           connected={connected}
           organizationId={organizationId}
           onOpenWhatsApp={() => navigate("WhatsApp")}
-          onOpenCampaigns={() => navigate("Campanhas")}
+          onOpenCampaigns={() => { setCampaignComposer(true); navigate("Campanhas"); }}
         />}
-        {section === "Campanhas" && <CampaignsPage accounts={accounts} organizationId={organizationId}/>}
+        {section === "Campanhas" && <CampaignsPage accounts={accounts} organizationId={organizationId} startCreating={campaignComposer}/>}
         {section === "Templates" && <TemplatesPage organizationId={organizationId}/>}
-        {section === "WhatsApp" && <WhatsAppSessionManager organizationId={organizationId} onConnectedCountChange={() => void refreshAccounts()}/>}
+        {section === "WhatsApp" && <WhatsAppSessionManager organizationId={organizationId} onAccountsChange={handleAccountsChange}/>}
 
         <footer className="app-footer">
           <span><ShieldCheck size={12}/>ZapFlow • operação protegida por fila persistente</span>

@@ -1,3 +1,4 @@
+import { serverFetch } from "./request-utils";
 import { sendText } from "./gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "./runtime-env";
 
@@ -65,14 +66,14 @@ function workerHeaders() {
 export function normalizePhone(phone: string) {
   const digits = phone.replace(/\D/g, "");
   if (!digits) return "";
-  if (digits.startsWith("55")) return digits;
   if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  if (digits.startsWith("55")) return digits;
   return digits;
 }
 
 export async function loadActiveSessions(request: Request, organizationId: string) {
   const select = encodeURIComponent("id,session_id,internal_name");
-  const response = await fetch(
+  const response = await serverFetch(
     `${supabaseUrl()}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&is_enabled=eq.true&connection_status=eq.CONNECTED&select=${select}&order=created_at.asc`,
     { headers: userHeaders(request) },
   );
@@ -113,7 +114,7 @@ async function filterPersistentSuppressions(
 ) {
   if (!recipients.length) return { eligible: recipients, rejected: 0 };
 
-  const response = await fetch(
+  const response = await serverFetch(
     `${supabaseUrl()}/rest/v1/rpc/zapflow_get_suppressed_phones`,
     {
       method: "POST",
@@ -144,7 +145,7 @@ export function renderRecipientMessage(
   recipient: QueueRecipient & { normalizedPhone: string },
 ) {
   const rendered = template
-    .replace(/{{\s*nome\s*}}/gi, recipient.name?.trim() || "cliente")
+    .replace(/{{\s*nome\s*}}/gi, () => recipient.name?.trim() || "cliente")
     .replace(/{{\s*telefone\s*}}/gi, recipient.normalizedPhone);
 
   const unresolved = rendered.match(/{{\s*[a-zA-Z0-9_]+\s*}}/);
@@ -168,7 +169,7 @@ export function allocateEvenly<T extends { normalizedPhone: string }>(
   }
   const counters = new Map<string, number>();
   return recipients.map((recipient, index) => {
-    const session = sessions[index % sessions.length];
+    const session = sessions[index % sessions.length]!;
     const sessionSequence = counters.get(session.id) ?? 0;
     counters.set(session.id, sessionSequence + 1);
     return { recipient, session, sessionSequence };
@@ -222,7 +223,7 @@ export async function createQueuedCampaign(
     max_attempts: 3,
   }));
 
-  const atomicResponse = await fetch(
+  const atomicResponse = await serverFetch(
     `${supabaseUrl()}/rest/v1/rpc/zapflow_create_campaign_with_jobs`,
     {
       method: "POST",
@@ -264,7 +265,7 @@ export async function createQueuedCampaign(
 }
 
 async function workerGatewayConfig(organizationId: string, workerSecret: string) {
-  const response = await fetch(
+  const response = await serverFetch(
     `${supabaseUrl()}/rest/v1/rpc/zapflow_get_gateway_config_for_worker`,
     {
       method: "POST",
@@ -310,7 +311,7 @@ async function finishJob(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await fetch(
+      const response = await serverFetch(
         `${supabaseUrl()}/rest/v1/rpc/zapflow_finish_message_job_secure`,
         {
           method: "POST",
@@ -349,7 +350,7 @@ async function finishJob(
 export async function runQueueWorker(workerId: string, limit = 20, workerSecret?: string) {
   if (!workerSecret) throw new Error("Segredo do worker ausente");
 
-  const claimResponse = await fetch(
+  const claimResponse = await serverFetch(
     `${supabaseUrl()}/rest/v1/rpc/zapflow_claim_message_jobs_secure`,
     {
       method: "POST",

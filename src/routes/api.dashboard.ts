@@ -1,3 +1,4 @@
+import { serverFetch } from "../lib/request-utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { authorizeOrganization } from "../lib/server-auth";
 import { supabasePublicConfig } from "../lib/runtime-env";
@@ -28,7 +29,7 @@ export const Route = createFileRoute("/api/dashboard")({
           if (!token) return Response.json({ error: "Não autenticado" }, { status: 401 });
 
           const { url, key } = supabasePublicConfig();
-          const response = await fetch(
+          const response = await serverFetch(
             `${url}/rest/v1/rpc/zapflow_dashboard_metrics`,
             {
               method: "POST",

@@ -90,7 +90,14 @@ const assetRecoveryScript = `
       box.id = "zapflow-asset-fallback";
       box.setAttribute("role", "alert");
       box.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;padding:14px 16px;border-radius:12px;background:#fff7e8;color:#6d4300;border:1px solid #e7ba65;font:600 13px/1.45 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.12)";
-      box.innerHTML = "O ZapFlow detectou uma atualização do sistema e não conseguiu carregar todos os arquivos. <a href=\\\""+location.pathname+"?zf_reload="+Date.now()+"\\\" style=\\\"color:#0b7a38;text-decoration:underline\\\">Recarregar agora</a>";
+      box.textContent = "Não foi possível carregar todos os arquivos da atualização. ";
+      var link = document.createElement("a");
+      var destination = new URL(location.href);
+      destination.searchParams.set("zf_reload", String(Date.now()));
+      link.href = destination.toString();
+      link.textContent = "Recarregar agora";
+      link.style.cssText = "color:#0b7a38;text-decoration:underline";
+      box.appendChild(link);
       document.body.appendChild(box);
     };
     if (document.readyState === "loading") {
@@ -104,14 +111,15 @@ const assetRecoveryScript = `
     if (!url || url.indexOf("/assets/") === -1 || recovering) return;
     recovering = true;
     var now = Date.now();
-    var last = Number(sessionStorage.getItem(key) || "0");
+    var last = 0;
+    try { last = Number(sessionStorage.getItem(key) || "0"); } catch (_) { showFallback(); return; }
 
     if (last && now - last < 15000) {
       showFallback();
       return;
     }
 
-    sessionStorage.setItem(key, String(now));
+    try { sessionStorage.setItem(key, String(now)); } catch (_) { showFallback(); return; }
     var target = new URL(location.href);
     target.searchParams.set("zf_reload", String(now));
     location.replace(target.toString());
@@ -150,5 +158,15 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  useEffect(() => {
+    // Mark readiness after React actually committed the interactive route tree.
+    document.documentElement.dataset["zapflowClient"] = "ready";
+    try { sessionStorage.removeItem("zapflow_asset_recovery"); } catch { /* Storage may be disabled. */ }
+    const current = new URL(window.location.href);
+    if (current.searchParams.has("zf_reload")) {
+      current.searchParams.delete("zf_reload");
+      window.history.replaceState(window.history.state, "", current.pathname + current.search + current.hash);
+    }
+  }, []);
   return <QueryClientProvider client={queryClient}><Outlet /></QueryClientProvider>;
 }
