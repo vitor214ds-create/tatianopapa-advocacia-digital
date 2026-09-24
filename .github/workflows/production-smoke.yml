@@ -1,0 +1,39 @@
+name: Production Interaction Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production-interaction-smoke
+  cancel-in-progress: true
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install isolated Playwright
+        run: |
+          mkdir -p /tmp/zapflow-smoke
+          cd /tmp/zapflow-smoke
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+          cp "$GITHUB_WORKSPACE/scripts/production-smoke.mjs" ./production-smoke.mjs
+
+      - name: Test production buttons
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          cd /tmp/zapflow-smoke
+          node production-smoke.mjs
