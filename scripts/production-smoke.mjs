@@ -207,7 +207,7 @@ async function testDashboard(browser, mobile = false) {
     await page.getByRole("button", { name: "Nova campanha", exact: true }).click();
     const activeAfterNewCampaign = (await page.locator("nav button.active").textContent())?.trim();
     assert(activeAfterNewCampaign === "Campanhas", "Dashboard Nova campanha did not open Campanhas");
-    await page.getByRole("button", { name: "Nova campanha", exact: true }).click();
+    await page.getByText("Importar contatos e programar disparo").waitFor();
     await page.getByText("Criar e enfileirar campanha").waitFor();
 
     const contactFile = page.locator('input[type="file"]').first();

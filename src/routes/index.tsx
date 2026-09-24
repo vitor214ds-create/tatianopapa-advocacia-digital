@@ -291,7 +291,7 @@ function CampaignsPage({
 }) {
   const active = accounts.filter(accountConnected);
   const [previewTotal, setPreviewTotal] = useState(103);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(true);
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [recipientText, setRecipientText] = useState("");
@@ -308,7 +308,15 @@ function CampaignsPage({
   const [success, setSuccess] = useState<string | null>(null);
 
   const parsedInput = useMemo(() => parseContactText(recipientText), [recipientText]);
-  const safeTotal = Math.max(0, Math.min(Number.isFinite(previewTotal) ? previewTotal : 0, 5000));
+  const safeTotal = Math.max(
+    0,
+    Math.min(
+      parsedInput.rows.length > 0
+        ? parsedInput.rows.length
+        : Number.isFinite(previewTotal) ? previewTotal : 0,
+      5000,
+    ),
+  );
   const allocation = active.length
     ? active.map((account, index) => ({
         account,
@@ -491,7 +499,7 @@ function CampaignsPage({
         "Campanha criada: " + result.eligible + " elegíveis, " + result.rejected +
         " rejeitados e " + result.sessions + " sessão(ões) participantes." + scheduleText,
       );
-      setCreating(false);
+      setCreating(true);
       setName("");
       setMessage("");
       setRecipientText("");
@@ -516,7 +524,7 @@ function CampaignsPage({
         <p>Importe contatos por arquivo, programe a data e hora e acompanhe a fila de envio.</p>
       </div>
       <button className="btn btn-primary" onClick={() => setCreating(true)}>
-        <Plus size={17}/>Nova campanha
+        <Upload size={17}/>Importar TXT / criar campanha
       </button>
     </div>
 
@@ -525,8 +533,8 @@ function CampaignsPage({
 
     {creating && <section className="panel mb-4">
       <div className="panel-title">
-        <div><span className="eyebrow">Nova campanha</span><h2>Criar campanha</h2></div>
-        <button className="btn btn-soft" onClick={() => setCreating(false)}><X size={16}/>Cancelar</button>
+        <div><span className="eyebrow">Campanha completa</span><h2>Importar contatos e programar disparo</h2></div>
+        <button className="btn btn-soft" onClick={() => setCreating(false)}><X size={16}/>Ocultar</button>
       </div>
 
       <div className="grid gap-4 p-4">
@@ -623,6 +631,7 @@ function CampaignsPage({
             <label className="btn btn-soft cursor-pointer">
               <Upload size={15}/>{readingFile ? "Lendo arquivo..." : "Carregar arquivo TXT/CSV"}
               <input
+                id="campaign-contact-file"
                 type="file"
                 accept=".txt,.csv,.tsv,text/plain,text/csv,text/tab-separated-values"
                 className="hidden"
