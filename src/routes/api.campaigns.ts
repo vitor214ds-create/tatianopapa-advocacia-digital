@@ -1,3 +1,4 @@
+import { isJsonObject, serverFetch } from "../lib/request-utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { authorizeOrganization, requireAdmin } from "../lib/server-auth";
 import { createQueuedCampaign, type QueueRecipient } from "../lib/campaign-queue-server";
@@ -43,7 +44,7 @@ export const Route = createFileRoute("/api/campaigns")({
           const select = encodeURIComponent(
             "id,name,status,total_recipients,eligible_recipients,rejected_recipients,sent_count,failed_count,canceled_count,started_at,completed_at,created_at,updated_at",
           );
-          const response = await fetch(
+          const response = await serverFetch(
             `${url}/rest/v1/zapflow_campaigns?organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&order=created_at.desc&limit=100`,
             { headers },
           );
@@ -72,14 +73,15 @@ export const Route = createFileRoute("/api/campaigns")({
           };
           try {
             body = JSON.parse(raw);
+            if (!isJsonObject(body)) return Response.json({ error: "O corpo deve ser um objeto JSON" }, { status: 400 });
           } catch {
             return Response.json({ error: "JSON inválido" }, { status: 400 });
           }
 
           if (
-            !body.organizationId ||
-            !body.name?.trim() ||
-            !body.message?.trim() ||
+            typeof body.organizationId !== "string" || !body.organizationId ||
+            typeof body.name !== "string" || body.name.trim().length < 2 ||
+            typeof body.message !== "string" || !body.message.trim() ||
             !Array.isArray(body.recipients) ||
             !body.recipients.length
           ) {

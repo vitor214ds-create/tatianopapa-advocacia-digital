@@ -1,3 +1,4 @@
+import { isJsonObject, serverFetch } from "../lib/request-utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { authorizeOrganization, requireAdmin } from "../lib/server-auth";
 import { supabasePublicConfig } from "../lib/runtime-env";
@@ -28,7 +29,7 @@ const ALLOWED_CATEGORIES = new Set(["general", "followup", "notification", "supp
 const ALLOWED_VARIABLES = new Set(["nome", "telefone"]);
 
 function cleanVariables(content: string) {
-  const found = [...content.matchAll(/{{\s*([a-zA-Z0-9_]+)\s*}}/g)].map(match => match[1]);
+  const found = [...content.matchAll(/{{\s*([a-zA-Z0-9_]+)\s*}}/g)].map(match => match[1]!);
   return [...new Set(found)];
 }
 
@@ -42,7 +43,7 @@ export const Route = createFileRoute("/api/templates")({
           await authorizeOrganization(request, organizationId);
           const { url } = supabasePublicConfig();
           const select = encodeURIComponent("id,name,content,variables,category,is_active,created_at,updated_at");
-          const response = await fetch(
+          const response = await serverFetch(
             `${url}/rest/v1/zapflow_message_templates?organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&order=created_at.desc`,
             { headers: headers(request) },
           );
@@ -70,10 +71,11 @@ export const Route = createFileRoute("/api/templates")({
           };
           try {
             body = JSON.parse(raw);
+            if (!isJsonObject(body)) return Response.json({ error: "O corpo deve ser um objeto JSON" }, { status: 400 });
           } catch {
             return Response.json({ error: "JSON inválido" }, { status: 400 });
           }
-          if (!body.organizationId || !body.action) {
+          if (typeof body.organizationId !== "string" || !body.organizationId || typeof body.action !== "string" || !body.action) {
             return Response.json({ error: "organizationId e action são obrigatórios" }, { status: 400 });
           }
           if (!["create", "update", "delete"].includes(body.action)) {
@@ -85,8 +87,8 @@ export const Route = createFileRoute("/api/templates")({
           const authHeaders = headers(request);
 
           if (body.action === "delete") {
-            if (!body.id) return Response.json({ error: "id é obrigatório" }, { status: 400 });
-            const response = await fetch(
+            if (typeof body.id !== "string" || !body.id) return Response.json({ error: "id é obrigatório" }, { status: 400 });
+            const response = await serverFetch(
               `${url}/rest/v1/zapflow_message_templates?id=eq.${encodeURIComponent(body.id)}&organization_id=eq.${encodeURIComponent(body.organizationId)}`,
               { method: "DELETE", headers: authHeaders },
             );
@@ -97,7 +99,8 @@ export const Route = createFileRoute("/api/templates")({
             return Response.json({ ok: true });
           }
 
-          const name = body.name?.trim() || "";
+          if (typeof body.name !== "string" || typeof body.content !== "string" || (body.category !== undefined && typeof body.category !== "string")) return Response.json({ error: "Dados de template inválidos" }, { status: 400 });
+          const name = body.name.trim();
           const content = body.content?.trim() || "";
           if (name.length < 2 || name.length > 80) {
             return Response.json({ error: "O nome deve ter entre 2 e 80 caracteres" }, { status: 400 });
@@ -129,8 +132,8 @@ export const Route = createFileRoute("/api/templates")({
           };
 
           if (body.action === "update") {
-            if (!body.id) return Response.json({ error: "id é obrigatório" }, { status: 400 });
-            const response = await fetch(
+            if (typeof body.id !== "string" || !body.id) return Response.json({ error: "id é obrigatório" }, { status: 400 });
+            const response = await serverFetch(
               `${url}/rest/v1/zapflow_message_templates?id=eq.${encodeURIComponent(body.id)}&organization_id=eq.${encodeURIComponent(body.organizationId)}`,
               { method: "PATCH", headers: authHeaders, body: JSON.stringify(commonPayload) },
             );
@@ -142,10 +145,12 @@ export const Route = createFileRoute("/api/templates")({
               }
               return Response.json({ error: "Não foi possível atualizar o template" }, { status: response.status });
             }
-            return Response.json({ ok: true, template: (await response.json())[0] });
+            const template = (await response.json())[0];
+            if (!template) return Response.json({ error: "Template não encontrado. Atualize a lista." }, { status: 404 });
+            return Response.json({ ok: true, template });
           }
 
-          const response = await fetch(`${url}/rest/v1/zapflow_message_templates`, {
+          const response = await serverFetch(`${url}/rest/v1/zapflow_message_templates`, {
             method: "POST",
             headers: authHeaders,
             body: JSON.stringify({ ...commonPayload, created_by: user.userId }),

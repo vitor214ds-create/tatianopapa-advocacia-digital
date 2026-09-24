@@ -55,16 +55,40 @@ export type MessageTemplate = {
   updated_at: string;
 };
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export function accountConnected(account: WhatsAppAccount) {
+  const state = String(account.connection_status || account.session_status || account.status || "").toUpperCase();
+  return account.is_enabled !== false && !account.reconnect_required && (state === "CONNECTED" || state === "OPEN");
+}
+
 async function json<T>(response: Response): Promise<T> {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((data as { error?: string }).error || `Erro HTTP ${response.status}`);
+  const text = await response.text();
+  let data: unknown;
+  try { data = JSON.parse(text); } catch { /* Some server errors are plain text. */ }
+  if (!response.ok) {
+    const message = data && typeof data === "object" && "error" in data && typeof data.error === "string"
+      ? data.error
+      : text && !text.trim().startsWith("<") ? text.slice(0, 300) : `O servidor não conseguiu concluir a ação (${response.status}). Tente novamente.`;
+    throw new ApiError(message, response.status);
+  }
+  if (!data || typeof data !== "object") {
+    throw new ApiError("O servidor retornou uma resposta inválida. Atualize a página e tente novamente.", 502);
+  }
   return data as T;
 }
 
 async function rawFetch(input: RequestInfo | URL, init: RequestInit = {}) {
-  const signal = init.signal ?? AbortSignal.timeout(15_000);
+  // Authentication and gateway operations perform several upstream requests.
+  // Do not abort the browser before the server's 20-second gateway timeout.
+  const signal = init.signal ?? AbortSignal.timeout(60_000);
   try {
-    return await fetch(input, { ...init, signal, credentials: "include" });
+    return await fetch(input, { ...init, signal, credentials: "include", cache: "no-store" });
   } catch (error) {
     if (
       error instanceof DOMException &&
@@ -72,6 +96,7 @@ async function rawFetch(input: RequestInfo | URL, init: RequestInit = {}) {
     ) {
       throw new Error("A conexão demorou demais. Tente novamente.");
     }
+    if (error instanceof TypeError) throw new Error("Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.");
     throw error;
   }
 }
@@ -79,9 +104,19 @@ async function rawFetch(input: RequestInfo | URL, init: RequestInit = {}) {
 async function protectedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   let response = await rawFetch(input, init);
   if (response.status !== 401) return response;
-  const auth = await rawFetch("/api/auth");
-  if (!auth.ok) return response;
-  return rawFetch(input, init);
+  try {
+    await getAuthState();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("zapflow:session-expired"));
+    }
+    throw error;
+  }
+  response = await rawFetch(input, init);
+  if (response.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event("zapflow:session-expired"));
+  }
+  return response;
 }
 
 export async function login(email: string, password: string) {
@@ -92,8 +127,14 @@ export async function login(email: string, password: string) {
   }));
 }
 
-export async function getAuthState() {
-  return json<AuthState>(await rawFetch("/api/auth"));
+// Share only an in-flight request, never a cached authenticated response.
+// Parallel 401s must not race to rotate the same refresh-token cookie.
+let authRequest: Promise<AuthState> | null = null;
+export function getAuthState(): Promise<AuthState> {
+  if (!authRequest) {
+    authRequest = rawFetch("/api/auth").then(json<AuthState>).finally(() => { authRequest = null; });
+  }
+  return authRequest;
 }
 
 export async function logout() {
@@ -174,7 +215,7 @@ export async function deleteTemplate(organizationId: string, id: string) {
 }
 
 export function qrImageSource(value?: string | null) {
-  if (!value) return null;
+  if (typeof value !== "string" || !value) return null;
   if (value.startsWith("data:image/")) return value;
   if (/^[A-Za-z0-9+/=\r\n]+$/.test(value) && value.length > 100) return `data:image/png;base64,${value.replace(/\s/g, "")}`;
   return null;
