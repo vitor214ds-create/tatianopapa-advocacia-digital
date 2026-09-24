@@ -1,8 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabasePublicConfig } from "../lib/runtime-env";
 
+function normalizedEvent(event: string) {
+  return event.toUpperCase().replace(/[.-]/g, "_");
+}
+
 function upperEventIncludesMessages(event: string) {
-  return event.toUpperCase().includes("MESSAGES_UPSERT");
+  return normalizedEvent(event) === "MESSAGES_UPSERT";
 }
 
 export const Route = createFileRoute("/api/gateway-webhook")({
