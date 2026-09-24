@@ -233,3 +233,41 @@ export async function sendText(
     config,
   );
 }
+
+
+export async function sendWhatsAppAudio(
+  instanceName: string,
+  number: string,
+  audioBase64: string,
+  config?: EvolutionConfig | null,
+) {
+  return evolutionFetch(
+    `/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ number, audio: audioBase64 }),
+    },
+    config,
+  );
+}
+
+export async function getMediaBase64(
+  instanceName: string,
+  message: {
+    key: {
+      id: string;
+      remoteJid: string;
+      fromMe: boolean;
+    };
+  },
+  config?: EvolutionConfig | null,
+) {
+  return evolutionFetch(
+    `/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    },
+    config,
+  );
+}

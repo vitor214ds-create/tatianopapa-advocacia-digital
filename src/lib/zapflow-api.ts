@@ -192,3 +192,92 @@ export function qrImageSource(value?: string | null) {
   if (/^[A-Za-z0-9+/=\r\n]+$/.test(value) && value.length > 100) return `data:image/png;base64,${value.replace(/\s/g, "")}`;
   return null;
 }
+
+
+export type ChatThread = {
+  id: string;
+  organization_id: string;
+  whatsapp_account_id: string;
+  session_id: string;
+  contact_phone: string;
+  contact_name?: string | null;
+  remote_jid?: string | null;
+  last_message_preview: string;
+  last_message_at: string;
+  last_direction: "IN" | "OUT";
+  unread_count: number;
+  account_name?: string | null;
+  account_phone?: string | null;
+};
+
+export type ChatMessage = {
+  id: string;
+  thread_id: string;
+  provider_message_id: string;
+  remote_jid: string;
+  direction: "IN" | "OUT";
+  message_type: "TEXT" | "AUDIO" | "IMAGE" | "VIDEO" | "DOCUMENT" | "OTHER";
+  text_content?: string | null;
+  mime_type?: string | null;
+  media_seconds?: number | null;
+  status: string;
+  sent_at: string;
+};
+
+export async function listChatThreads(organizationId: string) {
+  return json<{ ok: true; threads: ChatThread[] }>(
+    await protectedFetch(`/api/chat?action=threads&organizationId=${encodeURIComponent(organizationId)}`),
+  );
+}
+
+export async function listChatMessages(organizationId: string, threadId: string) {
+  return json<{ ok: true; messages: ChatMessage[] }>(
+    await protectedFetch(
+      `/api/chat?action=messages&organizationId=${encodeURIComponent(organizationId)}&threadId=${encodeURIComponent(threadId)}`,
+    ),
+  );
+}
+
+export async function markChatRead(organizationId: string, threadId: string) {
+  return json<{ ok: true }>(await protectedFetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "markRead", organizationId, threadId }),
+  }));
+}
+
+export async function sendChatText(
+  organizationId: string,
+  threadId: string,
+  text: string,
+) {
+  return json<{ ok: true; message: ChatMessage }>(await protectedFetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "sendText", organizationId, threadId, text }),
+  }));
+}
+
+export async function sendChatAudio(
+  organizationId: string,
+  threadId: string,
+  audioBase64: string,
+  mimeType: string,
+) {
+  return json<{ ok: true; message: ChatMessage }>(await protectedFetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "sendAudio", organizationId, threadId, audioBase64, mimeType }),
+  }));
+}
+
+export async function getChatMedia(
+  organizationId: string,
+  messageId: string,
+) {
+  return json<{ ok: true; base64: string; mimetype: string }>(
+    await protectedFetch(
+      `/api/chat?action=media&organizationId=${encodeURIComponent(organizationId)}&messageId=${encodeURIComponent(messageId)}`,
+    ),
+  );
+}

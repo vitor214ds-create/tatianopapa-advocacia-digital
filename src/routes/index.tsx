@@ -7,6 +7,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { WhatsAppSessionManager } from "../components/whatsapp-session-manager";
 import { TemplatesPage } from "../components/templates-page";
+import { ChatPage } from "../components/chat-page";
 import {
   createCampaign,
   getAuthState,
@@ -23,13 +24,14 @@ import {
 
 export const Route = createFileRoute("/")({ component: ZapFlowApp });
 
-type Section = "Dashboard" | "Campanhas" | "Templates" | "WhatsApp";
+type Section = "Dashboard" | "Campanhas" | "Templates" | "Chat" | "WhatsApp";
 
 const nav: { label: Section; icon: typeof Gauge }[] = [
   { label: "Dashboard", icon: Gauge },
   { label: "Campanhas", icon: Send },
   { label: "Templates", icon: FileText },
-  { label: "WhatsApp", icon: MessageCircle },
+  { label: "Chat", icon: MessageCircle },
+  { label: "WhatsApp", icon: Smartphone },
 ];
 
 function Logo() {
@@ -875,6 +877,7 @@ function ZapFlowApp() {
         />}
         {section === "Campanhas" && <CampaignsPage accounts={accounts} organizationId={organizationId}/>}
         {section === "Templates" && <TemplatesPage organizationId={organizationId}/>}
+        {section === "Chat" && <ChatPage organizationId={organizationId}/>}
         {section === "WhatsApp" && <WhatsAppSessionManager organizationId={organizationId} onConnectedCountChange={() => void refreshAccounts()}/>}
 
         <footer className="app-footer">

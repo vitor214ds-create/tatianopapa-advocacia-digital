@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabasePublicConfig } from "../lib/runtime-env";
 
+function upperEventIncludesMessages(event: string) {
+  return event.toUpperCase().includes("MESSAGES_UPSERT");
+}
+
 export const Route = createFileRoute("/api/gateway-webhook")({
   server: {
     handlers: {
@@ -69,7 +73,31 @@ export const Route = createFileRoute("/api/gateway-webhook")({
           }
 
           const stored = Boolean(await response.json());
-          return Response.json({ ok: true, stored });
+
+          let chatStored = false;
+          if (upperEventIncludesMessages(event)) {
+            const chatResponse = await fetch(`${url}/rest/v1/rpc/zapflow_ingest_chat_message`, {
+              method: "POST",
+              headers: {
+                apikey: key,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                p_organization_id: organizationId,
+                p_secret: secret,
+                p_instance_name: instanceName,
+                p_event: event,
+                p_payload: payload,
+              }),
+            });
+            if (chatResponse.ok) {
+              chatStored = Boolean(await chatResponse.json());
+            } else {
+              console.error("Falha ao persistir mensagem no Chat", chatResponse.status, await chatResponse.text());
+            }
+          }
+
+          return Response.json({ ok: true, stored, chatStored });
         } catch (error) {
           console.error("Gateway webhook failed", error);
           return Response.json({ error: "Webhook error" }, { status: 500 });

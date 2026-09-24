@@ -224,6 +224,10 @@ async function testDashboard(browser, mobile = false) {
     await page.getByText(/round-robin/i).waitFor({ state: "visible" });
     console.log("PASS campaign TXT/CSV import + round-robin schedule window controls");
 
+    await clickSection(page, "Chat");
+    await page.getByText("Caixa de entrada").waitFor();
+    console.log("PASS Chat section");
+
     await clickSection(page, "Templates");
     const newTemplate = page.getByRole("button", { name: /Novo template/i }).first();
     if (await newTemplate.count()) {
