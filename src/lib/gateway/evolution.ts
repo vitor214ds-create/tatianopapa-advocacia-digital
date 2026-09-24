@@ -271,3 +271,29 @@ export async function getMediaBase64(
     config,
   );
 }
+
+
+export async function setInstanceWebhook(
+  instanceName: string,
+  webhookUrl: string,
+  webhookHeaders: Record<string, string>,
+  config?: EvolutionConfig | null,
+) {
+  return evolutionFetch(
+    `/webhook/set/${encodeURIComponent(instanceName)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          byEvents: false,
+          base64: false,
+          headers: webhookHeaders,
+          events: ["CONNECTION_UPDATE", "MESSAGES_UPSERT", "MESSAGES_UPDATE"],
+        },
+      }),
+    },
+    config,
+  );
+}
