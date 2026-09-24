@@ -175,6 +175,13 @@ function mockApi(route) {
   return route.continue();
 }
 
+async function clickSection(page, name) {
+  await page.getByRole("button", { name, exact: true }).first().click();
+  await page.waitForTimeout(200);
+  const active = (await page.locator("nav button.active").textContent())?.trim();
+  assert(active === name, `Expected active section ${name}, got ${active}`);
+}
+
 async function testDashboard(browser, mobile = false) {
   const context = await browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 },
@@ -192,28 +199,32 @@ async function testDashboard(browser, mobile = false) {
     await page.locator(".scrim").waitFor({ state: "visible" });
     await page.locator(".scrim").click();
     await page.getByRole("button", { name: "Abrir menu" }).click();
-    await page.getByRole("button", { name: "Campanhas", exact: true }).click();
-    await page.getByRole("heading", { name: "Campanhas" }).waitFor();
+    await clickSection(page, "Campanhas");
     console.log("PASS mobile menu + scrim + Campanhas");
   } else {
     await page.getByRole("button", { name: "Atualizar", exact: true }).click();
 
     await page.getByRole("button", { name: "Nova campanha", exact: true }).click();
-    await page.getByRole("heading", { name: "Campanhas" }).waitFor();
+    const activeAfterNewCampaign = (await page.locator("nav button.active").textContent())?.trim();
+    assert(activeAfterNewCampaign === "Campanhas", "Dashboard Nova campanha did not open Campanhas");
     await page.getByRole("button", { name: "Nova campanha", exact: true }).click();
     await page.getByText("Criar e enfileirar campanha").waitFor();
 
-    await page.getByRole("button", { name: "Templates", exact: true }).click();
-    await page.getByRole("heading", { name: "Templates" }).waitFor();
+    await clickSection(page, "Templates");
+    const newTemplate = page.getByRole("button", { name: /Novo template/i }).first();
+    if (await newTemplate.count()) {
+      await newTemplate.click();
+      await page.getByText(/Criar template|Novo template/i).first().waitFor();
+    }
 
-    await page.getByRole("button", { name: "WhatsApp", exact: true }).click();
-    await page.getByText(/WhatsApp|sess/i).first().waitFor();
+    await clickSection(page, "WhatsApp");
 
-    await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+    await clickSection(page, "Dashboard");
     await page.getByText("Central de operações").waitFor();
 
     await page.getByRole("button", { name: "Gerenciar", exact: true }).click();
-    await page.getByText(/WhatsApp|sess/i).first().waitFor();
+    const activeAfterManage = (await page.locator("nav button.active").textContent())?.trim();
+    assert(activeAfterManage === "WhatsApp", "Gerenciar did not open WhatsApp");
     console.log("PASS dashboard navigation + action buttons");
   }
 
