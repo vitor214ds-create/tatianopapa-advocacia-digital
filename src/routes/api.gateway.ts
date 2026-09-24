@@ -8,6 +8,7 @@ import {
   hasGatewayConfig,
   logoutInstance,
   normalizeEvolutionBaseUrl,
+  setInstanceWebhook,
   type EvolutionConfig,
 } from "../lib/gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
@@ -156,6 +157,27 @@ async function patchAccount(request: Request, organizationId: string, instanceNa
   if (!response.ok) throw new Error(`Falha ao atualizar sessão: ${await response.text()}`);
 }
 
+async function syncInstanceWebhook(
+  request: Request,
+  organizationId: string,
+  instanceName: string,
+  gatewayConfig: EvolutionConfig | null,
+) {
+  if (!hasGatewayConfig(gatewayConfig)) return false;
+  const origin = new URL(request.url).origin;
+  const webhookSecret = await getOrganizationWebhookSecret(request, organizationId);
+  await setInstanceWebhook(
+    instanceName,
+    `${origin}/api/gateway-webhook`,
+    {
+      "x-zapflow-organization-id": organizationId,
+      "x-zapflow-webhook-secret": webhookSecret,
+    },
+    gatewayConfig,
+  );
+  return true;
+}
+
 export const Route = createFileRoute("/api/gateway")({
   server: {
     handlers: {
@@ -166,11 +188,40 @@ export const Route = createFileRoute("/api/gateway")({
           const user = await authorizeOrganization(request, organizationId);
           requireAdmin(user);
           const gatewayConfig = await getOrganizationGatewayConfig(request, organizationId);
+          const accounts = await listAccounts(request, organizationId);
+
+          const connectedAccounts = accounts.filter(account => {
+            const state = String(
+              account.connection_status || account.session_status || account.status || "",
+            ).toUpperCase();
+            return state === "CONNECTED" || state === "OPEN";
+          });
+
+          const webhookSync = await Promise.all(
+            connectedAccounts.map(async account => {
+              try {
+                await syncInstanceWebhook(
+                  request,
+                  organizationId,
+                  account.session_id,
+                  gatewayConfig,
+                );
+                return { sessionId: account.session_id, ok: true };
+              } catch (error) {
+                console.error("Falha ao sincronizar webhook da sessão", account.session_id, error);
+                return { sessionId: account.session_id, ok: false };
+              }
+            }),
+          );
+
           return Response.json({
             ok: true,
             gatewayConfigured: hasGatewayConfig(gatewayConfig),
             gatewayBaseUrl: gatewayConfig?.baseUrl || null,
-            accounts: await listAccounts(request, organizationId),
+            webhookReady: connectedAccounts.length > 0
+              ? webhookSync.every(item => item.ok)
+              : false,
+            accounts,
           });
         } catch (error) {
           if (error instanceof Response) return error;
@@ -330,6 +381,14 @@ export const Route = createFileRoute("/api/gateway")({
                 last_seen_at: new Date().toISOString(),
                 connected_at: normalized === "CONNECTED" ? new Date().toISOString() : null,
               });
+              if (normalized === "CONNECTED") {
+                await syncInstanceWebhook(
+                  request,
+                  body.organizationId,
+                  safeName,
+                  gatewayConfig,
+                );
+              }
               break;
             }
             case "logout":
