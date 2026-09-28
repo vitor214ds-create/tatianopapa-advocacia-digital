@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ApiAuthRouteImport } from './routes/api.auth'
 import { Route as ApiCampaignWorkerRouteImport } from './routes/api.campaign-worker'
 import { Route as ApiCampaignsRouteImport } from './routes/api.campaigns'
+import { Route as ApiChatRouteImport } from './routes/api.chat'
 import { Route as ApiDashboardRouteImport } from './routes/api.dashboard'
 import { Route as ApiGatewayRouteImport } from './routes/api.gateway'
 import { Route as ApiGatewayWebhookRouteImport } from './routes/api.gateway-webhook'
@@ -43,6 +44,11 @@ const ApiCampaignWorkerRoute = ApiCampaignWorkerRouteImport.update({
 const ApiCampaignsRoute = ApiCampaignsRouteImport.update({
   id: '/api/campaigns',
   path: '/api/campaigns',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiChatRoute = ApiChatRouteImport.update({
+  id: '/api/chat',
+  path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDashboardRoute = ApiDashboardRouteImport.update({
@@ -77,6 +83,7 @@ export interface FileRoutesByFullPath {
   '/api/auth': typeof ApiAuthRoute
   '/api/campaign-worker': typeof ApiCampaignWorkerRoute
   '/api/campaigns': typeof ApiCampaignsRoute
+  '/api/chat': typeof ApiChatRoute
   '/api/dashboard': typeof ApiDashboardRoute
   '/api/gateway': typeof ApiGatewayRoute
   '/api/gateway-webhook': typeof ApiGatewayWebhookRoute
@@ -89,6 +96,7 @@ export interface FileRoutesByTo {
   '/api/auth': typeof ApiAuthRoute
   '/api/campaign-worker': typeof ApiCampaignWorkerRoute
   '/api/campaigns': typeof ApiCampaignsRoute
+  '/api/chat': typeof ApiChatRoute
   '/api/dashboard': typeof ApiDashboardRoute
   '/api/gateway': typeof ApiGatewayRoute
   '/api/gateway-webhook': typeof ApiGatewayWebhookRoute
@@ -102,6 +110,7 @@ export interface FileRoutesById {
   '/api/auth': typeof ApiAuthRoute
   '/api/campaign-worker': typeof ApiCampaignWorkerRoute
   '/api/campaigns': typeof ApiCampaignsRoute
+  '/api/chat': typeof ApiChatRoute
   '/api/dashboard': typeof ApiDashboardRoute
   '/api/gateway': typeof ApiGatewayRoute
   '/api/gateway-webhook': typeof ApiGatewayWebhookRoute
@@ -116,6 +125,7 @@ export interface FileRouteTypes {
     | '/api/auth'
     | '/api/campaign-worker'
     | '/api/campaigns'
+    | '/api/chat'
     | '/api/dashboard'
     | '/api/gateway'
     | '/api/gateway-webhook'
@@ -128,6 +138,7 @@ export interface FileRouteTypes {
     | '/api/auth'
     | '/api/campaign-worker'
     | '/api/campaigns'
+    | '/api/chat'
     | '/api/dashboard'
     | '/api/gateway'
     | '/api/gateway-webhook'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/api/auth'
     | '/api/campaign-worker'
     | '/api/campaigns'
+    | '/api/chat'
     | '/api/dashboard'
     | '/api/gateway'
     | '/api/gateway-webhook'
@@ -153,6 +165,7 @@ export interface RootRouteChildren {
   ApiAuthRoute: typeof ApiAuthRoute
   ApiCampaignWorkerRoute: typeof ApiCampaignWorkerRoute
   ApiCampaignsRoute: typeof ApiCampaignsRoute
+  ApiChatRoute: typeof ApiChatRoute
   ApiDashboardRoute: typeof ApiDashboardRoute
   ApiGatewayRoute: typeof ApiGatewayRoute
   ApiGatewayWebhookRoute: typeof ApiGatewayWebhookRoute
@@ -195,6 +208,13 @@ declare module '@tanstack/react-router' {
       path: '/api/campaigns'
       fullPath: '/api/campaigns'
       preLoaderRoute: typeof ApiCampaignsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/chat': {
+      id: '/api/chat'
+      path: '/api/chat'
+      fullPath: '/api/chat'
+      preLoaderRoute: typeof ApiChatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/dashboard': {
@@ -241,6 +261,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthRoute: ApiAuthRoute,
   ApiCampaignWorkerRoute: ApiCampaignWorkerRoute,
   ApiCampaignsRoute: ApiCampaignsRoute,
+  ApiChatRoute: ApiChatRoute,
   ApiDashboardRoute: ApiDashboardRoute,
   ApiGatewayRoute: ApiGatewayRoute,
   ApiGatewayWebhookRoute: ApiGatewayWebhookRoute,
