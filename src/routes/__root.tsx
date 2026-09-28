@@ -151,12 +151,50 @@ const assetRecoveryScript = `
 })();
 `;
 
+const hydrationWatchdogScript = `
+(function () {
+  var guardKey = "zapflow_hydration_recovery";
+
+  function fallback() {
+    if (!document.body || document.getElementById("zapflow-hydration-fallback")) return;
+    var box = document.createElement("div");
+    box.id = "zapflow-hydration-fallback";
+    box.setAttribute("role", "alert");
+    box.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;padding:14px 16px;border-radius:12px;background:#fff7e8;color:#6d4300;border:1px solid #e7ba65;font:600 13px/1.5 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.18)";
+    var href = location.pathname + "?zf_reload=" + Date.now();
+    box.innerHTML = "A interface do ZapFlow não iniciou corretamente. <a href=\\\"" + href + "\\\" style=\\\"color:#087a37;text-decoration:underline;font-weight:800\\\">Recarregar o sistema</a>";
+    document.body.appendChild(box);
+  }
+
+  setTimeout(function () {
+    if (document.documentElement.dataset.zapflowClient === "ready") {
+      sessionStorage.removeItem(guardKey);
+      return;
+    }
+
+    var last = Number(sessionStorage.getItem(guardKey) || "0");
+    var now = Date.now();
+
+    if (!last || now - last > 30000) {
+      sessionStorage.setItem(guardKey, String(now));
+      var target = new URL(location.href);
+      target.searchParams.set("zf_reload", String(now));
+      location.replace(target.toString());
+      return;
+    }
+
+    fallback();
+  }, 6000);
+})();
+`;
+
 function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
       <head><HeadContent /></head>
       <body>
         <script dangerouslySetInnerHTML={{ __html: assetRecoveryScript }} />
+        <script dangerouslySetInnerHTML={{ __html: hydrationWatchdogScript }} />
         {children}
         <Scripts />
       </body>
