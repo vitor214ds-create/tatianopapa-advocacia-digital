@@ -221,7 +221,7 @@ async function testDashboard(browser, mobile = false) {
     const scheduleInputs = page.locator('input[type="datetime-local"]');
     await scheduleInputs.first().waitFor({ state: "visible" });
     assert(await scheduleInputs.count() === 2, "Expected start and end scheduling inputs");
-    await page.getByText(/round-robin/i).waitFor({ state: "visible" });
+    await page.getByText(/round-robin/i).first().waitFor({ state: "visible" });
     console.log("PASS campaign TXT/CSV import + round-robin schedule window controls");
 
     await clickSection(page, "Chat");
