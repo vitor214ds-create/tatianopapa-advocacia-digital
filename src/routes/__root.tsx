@@ -117,6 +117,11 @@ const assetRecoveryScript = `
     location.replace(target.toString());
   }
 
+  window.addEventListener("vite:preloadError", function (event) {
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    recoverAsset("/assets/vite-preload");
+  });
+
   window.addEventListener("error", function (event) {
     var target = event.target;
     if (!target) return;
@@ -132,6 +137,17 @@ const assetRecoveryScript = `
       recoverAsset("/assets/dynamic-chunk");
     }
   });
+
+  // A página pode ser renderizada no servidor mesmo quando o cliente React
+  // não chega a hidratar. Nesse caso não existe erro de asset obrigatório:
+  // a tela simplesmente parece normal e todos os botões ficam "mortos".
+  // Detecte isso e faça uma única recuperação de versão/cache.
+  window.setTimeout(function () {
+    var state = document.documentElement.dataset.zapflowClient || "";
+    if (state !== "ready") {
+      recoverAsset("/assets/hydration-watchdog");
+    }
+  }, 5000);
 })();
 `;
 
