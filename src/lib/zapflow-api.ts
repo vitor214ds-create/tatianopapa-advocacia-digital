@@ -64,7 +64,7 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 async function rawFetch(input: RequestInfo | URL, init: RequestInit = {}) {
-  const signal = init.signal ?? AbortSignal.timeout(15_000);
+  const signal = init.signal ?? AbortSignal.timeout(45_000);
   try {
     return await fetch(input, { ...init, signal, credentials: "include" });
   } catch (error) {
@@ -107,7 +107,7 @@ export async function logout() {
 }
 
 export async function listWhatsAppAccounts(organizationId: string) {
-  return json<{ ok: true; gatewayConfigured: boolean; gatewayBaseUrl?: string | null; accounts: WhatsAppAccount[] }>(await protectedFetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`));
+  return json<{ ok: true; gatewayConfigured: boolean; gatewayBaseUrl?: string | null; gatewayError?: string | null; accounts: WhatsAppAccount[] }>(await protectedFetch(`/api/gateway?organizationId=${encodeURIComponent(organizationId)}`));
 }
 
 export async function configureGateway(organizationId: string, baseUrl: string, apiKey: string) {
@@ -118,11 +118,11 @@ export async function configureGateway(organizationId: string, baseUrl: string, 
   }));
 }
 
-export async function gatewayAction(organizationId: string, action: "create" | "qr" | "status" | "logout" | "delete", instanceName: string) {
+export async function gatewayAction(organizationId: string, action: "create" | "qr" | "pair" | "status" | "logout" | "delete", instanceName: string, phone?: string) {
   return json<any>(await protectedFetch("/api/gateway", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ organizationId, action, instanceName }),
+    body: JSON.stringify({ organizationId, action, instanceName, phone }),
   }));
 }
 
@@ -187,7 +187,7 @@ export async function deleteTemplate(organizationId: string, id: string) {
 }
 
 export function qrImageSource(value?: string | null) {
-  if (!value) return null;
+  if (typeof value !== "string" || !value) return null;
   if (value.startsWith("data:image/")) return value;
   if (/^[A-Za-z0-9+/=\r\n]+$/.test(value) && value.length > 100) return `data:image/png;base64,${value.replace(/\s/g, "")}`;
   return null;
@@ -225,7 +225,7 @@ export type ChatMessage = {
 };
 
 export async function listChatThreads(organizationId: string) {
-  return json<{ ok: true; threads: ChatThread[] }>(
+  return json<{ ok: true; webhookReady: boolean; accounts: WhatsAppAccount[]; threads: ChatThread[] }>(
     await protectedFetch(`/api/chat?action=threads&organizationId=${encodeURIComponent(organizationId)}`),
   );
 }

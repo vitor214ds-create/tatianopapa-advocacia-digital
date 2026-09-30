@@ -1,132 +1,152 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, MoreHorizontal, QrCode, RefreshCw, Smartphone, Trash2, Unplug, X } from "lucide-react";
+import { accountLabel } from "../lib/gateway/accounts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, Loader2, MessageCircle, Phone, QrCode, RefreshCw, Settings2, Smartphone, Trash2, Unplug } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { configureGateway, gatewayAction, listWhatsAppAccounts, qrImageSource, type WhatsAppAccount } from "../lib/zapflow-api";
 
-type Props = { organizationId: string; onConnectedCountChange?: (count: number) => void };
-type ModalState = { instanceName: string; qr: string | null; loading: boolean; error: string | null } | null;
+type Props = { organizationId: string; onConnectedCountChange?: (count: number) => void; onOpenChat?: (sessionId: string) => void };
+type Connection = { instanceName: string; label: string; mode: "qr" | "phone"; phone: string; qr: string | null; code: string | null; loading: boolean; error: string | null };
 const MAX_SESSIONS = 10;
-function normalizedState(account: WhatsAppAccount) { return String(account.connection_status || account.session_status || account.status || "DISCONNECTED").toUpperCase(); }
-function isConnected(account: WhatsAppAccount) { const state = normalizedState(account); return state === "CONNECTED" || state === "OPEN"; }
-function isWaiting(account: WhatsAppAccount) { const state = normalizedState(account); return state.includes("WAITING") || state.includes("CONNECTING"); }
-function slotName(index: number) { return `WhatsApp ${String(index + 1).padStart(2, "0")}`; }
-
-export function WhatsAppSessionManager({ organizationId, onConnectedCountChange }: Props) {
+function connected(account: WhatsAppAccount) { return ["OPEN", "CONNECTED"].includes(String(account.connection_status || account.session_status || account.status).toUpperCase()); }
+export function WhatsAppSessionManager({ organizationId, onConnectedCountChange, onOpenChat }: Props) {
   const [accounts, setAccounts] = useState<WhatsAppAccount[]>([]);
-  const [gatewayConfigured, setGatewayConfigured] = useState(false);
-  const [gatewayBaseUrl, setGatewayBaseUrl] = useState("");
+  const [configured, setConfigured] = useState(false);
   const [configUrl, setConfigUrl] = useState("");
   const [configKey, setConfigKey] = useState("");
-  const [configBusy, setConfigBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [modal, setModal] = useState<ModalState>(null);
-  const pollRef = useRef<number | null>(null);
-  const connected = useMemo(() => accounts.filter(isConnected).length, [accounts]);
+  const [modal, setModal] = useState<Connection | null>(null);
+  const generation = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alive = useRef(true);
+  const refreshFlight = useRef<Promise<void> | null>(null);
+  const count = accounts.filter(connected).length;
+  const connectedCallback = useRef(onConnectedCountChange);
+  connectedCallback.current = onConnectedCountChange;
+  useEffect(() => { connectedCallback.current?.(count); }, [count]);
 
-  useEffect(() => { onConnectedCountChange?.(connected); }, [connected, onConnectedCountChange]);
+  const refresh = useCallback(() => {
+    if (refreshFlight.current) return refreshFlight.current;
+    refreshFlight.current = listWhatsAppAccounts(organizationId).then(data => {
+      if (!alive.current) return;
+      setAccounts(data.accounts || []); setConfigured(data.gatewayConfigured);
+      setConfigUrl(current => current || data.gatewayBaseUrl || "");
+      setError(data.gatewayError || null);
+    }).catch(err => { if (alive.current) setError(err.message); }).finally(() => {
+      refreshFlight.current = null; if (alive.current) setLoading(false);
+    });
+    return refreshFlight.current;
+  }, [organizationId]);
+  useEffect(() => {
+    alive.current = true;
+    void refresh();
+    const interval = setInterval(() => void refresh(), 15000);
+    return () => { alive.current = false; generation.current++; clearInterval(interval); if (timer.current) clearTimeout(timer.current); };
+  }, [refresh]);
 
-  async function refresh() {
-    try {
-      const response = await listWhatsAppAccounts(organizationId);
-      setAccounts(response.accounts || []);
-      setGatewayConfigured(Boolean(response.gatewayConfigured));
-      setGatewayBaseUrl(response.gatewayBaseUrl || "");
-      if (response.gatewayBaseUrl) setConfigUrl(response.gatewayBaseUrl);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Não foi possível carregar as sessões.");
-    } finally { setLoading(false); }
+  function close() { generation.current++; if (timer.current) clearTimeout(timer.current); setModal(null); setBusy(false); }
+  function open(instanceName: string, label: string, mode: "qr" | "phone") {
+    close();
+    const next: Connection = { instanceName, label, mode, phone: "", qr: null, code: null, loading: false, error: null };
+    setModal(next);
+    if (mode === "qr") void connect(next);
   }
-
-  useEffect(() => { void refresh(); const id = window.setInterval(() => void refresh(), 15000); return () => window.clearInterval(id); }, [organizationId]);
-  useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
-
-  async function saveGatewayConfig() {
-    setConfigBusy(true); setError(null);
-    try {
-      await configureGateway(organizationId, configUrl.trim(), configKey.trim());
-      setConfigKey("");
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Não foi possível salvar o gateway.");
-    } finally { setConfigBusy(false); }
-  }
-
-  async function openQr(instanceName: string, createFirst = false) {
-    if (!gatewayConfigured) { setError("Configure a Evolution API abaixo antes de conectar por QR."); return; }
-    setModal({ instanceName, qr: null, loading: true, error: null });
-    setBusy(instanceName);
-    try {
-      if (createFirst) await gatewayAction(organizationId, "create", instanceName);
-      const qrResponse = await gatewayAction(organizationId, "qr", instanceName);
-      const source = qrImageSource(qrResponse?.result?.qrcode);
-      setModal({ instanceName, qr: source, loading: false, error: source ? null : "O gateway respondeu, mas não retornou uma imagem de QR válida." });
-      await refresh();
-      startStatusPolling(instanceName);
-    } catch (err) {
-      setModal({ instanceName, qr: null, loading: false, error: err instanceof Error ? err.message : "Falha ao gerar QR." });
-    } finally { setBusy(null); }
-  }
-
-  function startStatusPolling(instanceName: string) {
-    if (pollRef.current) window.clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(async () => {
+  async function connect(connection: Connection) {
+    if (!configured) return;
+    const phone = connection.mode === "phone" ? connection.phone.replace(/\D/g, "") : undefined;
+    if (phone !== undefined && !/^[1-9]\d{9,14}$/.test(phone)) {
+      setModal({ ...connection, error: "Informe o código do país + DDD + número. Exemplo: 5527999999999." }); return;
+    }
+    if (timer.current) clearTimeout(timer.current);
+    const requestId = ++generation.current;
+    const current = () => alive.current && requestId === generation.current;
+    setModal({ ...connection, qr: null, code: null, loading: true, error: null }); setBusy(true);
+    let lastQrAt = 0;
+    const startedAt = Date.now();
+    let transientFailures = 0;
+    const apply = (response: any) => {
+      if (!current()) return;
+      const qr = qrImageSource(response.result?.qrcode);
+      const code = typeof response.result?.pairingCode === "string" ? response.result.pairingCode : null;
+      if (connection.mode === "phone" ? code : qr) lastQrAt = Date.now();
+      setModal(value => value ? { ...value, qr, code, loading: connection.mode === "phone" ? !code : !qr, error: null } : null);
+    };
+    const poll = async () => {
+      if (!current()) return;
       try {
-        const response = await gatewayAction(organizationId, "status", instanceName);
-        const state = String(response?.result?.status || "").toUpperCase();
-        await refresh();
-        if (state === "OPEN" || state === "CONNECTED") {
-          if (pollRef.current) window.clearInterval(pollRef.current);
-          pollRef.current = null;
-          setModal(null);
+        const status = await gatewayAction(organizationId, "status", connection.instanceName);
+        if (!current()) return;
+        if (["OPEN", "CONNECTED"].includes(String(status.result?.status).toUpperCase())) { close(); await refresh(); return; }
+        if (Date.now() - startedAt > 180000) {
+          setModal(value => value ? { ...value, qr: null, code: null, loading: false, error: "O tempo de conexão terminou. Gere um novo código para tentar novamente." } : null); return;
         }
-      } catch { }
-    }, 3500);
+        // Retrieve delayed QR and keep it fresh. Pairing codes are not regenerated once displayed.
+        if (!lastQrAt || (connection.mode === "qr" && Date.now() - lastQrAt >= 25000)) {
+          apply(await gatewayAction(organizationId, connection.mode === "phone" ? "pair" : "qr", connection.instanceName, phone));
+        }
+        transientFailures = 0;
+      } catch (err) {
+        if (!current()) return;
+        transientFailures++;
+        setModal(value => value ? { ...value, loading: false, error: err instanceof Error ? err.message : "Falha ao consultar a conexão." } : null);
+        if (transientFailures >= 3) return;
+      }
+      if (current()) timer.current = setTimeout(() => void poll(), 4000);
+    };
+    try {
+      const exists = accounts.some(account => account.session_id === connection.instanceName);
+      const response = await gatewayAction(organizationId, exists ? (phone ? "pair" : "qr") : "create", connection.instanceName, phone);
+      if (!current()) return;
+      apply(response);
+      // Creation can return a valid QR: preserve it, wait for status before requesting another.
+      timer.current = setTimeout(() => void poll(), 3500);
+    } catch (err) {
+      if (current()) setModal(value => value ? { ...value, loading: false, error: err instanceof Error ? err.message : "Não foi possível conectar." } : null);
+    } finally { if (current()) { setBusy(false); void refresh(); } }
   }
-
-  function closeModal() { if (pollRef.current) window.clearInterval(pollRef.current); pollRef.current = null; setModal(null); }
-
-  async function runAction(account: WhatsAppAccount, action: "status" | "logout" | "delete") {
-    if (!gatewayConfigured) { setError("Configure a Evolution API antes de administrar sessões."); return; }
-    const instanceName = account.session_id;
-    if (action === "delete" && !window.confirm(`Excluir a sessão ${account.internal_name || instanceName}?`)) return;
-    setBusy(instanceName); setError(null);
-    try { await gatewayAction(organizationId, action, instanceName); await refresh(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Não foi possível concluir a ação."); }
-    finally { setBusy(null); }
+  async function action(account: WhatsAppAccount, actionName: "status" | "logout" | "delete") {
+    if (busy) return;
+    if (actionName !== "status" && !window.confirm(actionName === "delete" ? "Excluir esta sessão?" : "Desconectar este WhatsApp? Você precisará conectá-lo novamente.")) return;
+    setBusy(true);
+    try { await gatewayAction(organizationId, actionName, account.session_id); await refresh(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Falha na operação."); }
+    finally { setBusy(false); }
   }
+  async function save() {
+    setBusy(true);
+    try { await configureGateway(organizationId, configUrl.trim(), configKey.trim()); setConfigKey(""); setEditing(false); await refresh(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Não foi possível salvar."); }
+    finally { setBusy(false); }
+  }
+  const slots = useMemo(() => {
+    const result = accounts.map((account, index) => ({ account: account as WhatsAppAccount | null, id: account.session_id, label: accountLabel(account, `WhatsApp ${index + 1}`) }));
+    for (let index = 1; result.length < MAX_SESSIONS; index++) {
+      const id = `zapflow-${organizationId.slice(0, 8)}-${String(index).padStart(2, "0")}`;
+      if (!result.some(item => item.id === id)) result.push({ account: null, id, label: `WhatsApp ${index}` });
+    }
+    return result;
+  }, [accounts, organizationId]);
 
-  const accountsBySession = useMemo(
-    () => new Map(accounts.map(account => [account.session_id, account])),
-    [accounts],
-  );
-  const slots = Array.from({ length: MAX_SESSIONS }, (_, index) => {
-    const sessionId = `zapflow-${organizationId.slice(0, 8)}-${String(index + 1).padStart(2, "0")}`;
-    return { index, account: accountsBySession.get(sessionId) || null };
-  });
-
-  return <>
-    <div className="page-heading"><div><span className="eyebrow">Sessões reais</span><h1>Números WhatsApp</h1><p>Conecte e gerencie até 10 números independentes. O QR é gerado pela Evolution API hospedada.</p></div><button className="btn btn-soft" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? "animate-spin" : ""}/>Atualizar</button></div>
-
-    {gatewayConfigured ? <div className="notice"><CheckCircle2 size={20}/><div><strong>Gateway pronto</strong><p>Evolution conectada{gatewayBaseUrl ? ` em ${gatewayBaseUrl}` : ""}. A credencial da Evolution permanece somente no backend e nunca é exibida no navegador.</p></div></div> : <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><div className="flex items-start gap-3"><AlertTriangle size={18} className="mt-0.5 shrink-0"/><div className="w-full"><strong className="block">Conecte sua Evolution API hospedada</strong><p className="mt-1">Informe a URL pública HTTPS ou o endereço privado do Railway e a API key. Quando salva aqui, a chave é guardada no Supabase Vault e não é exibida novamente.</p><div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]"><input className="h-11 rounded-xl border border-amber-200 bg-white px-3 outline-none" placeholder="https://evolution.seudominio.com ou http://evolution-api.railway.internal:8080" value={configUrl} onChange={e=>setConfigUrl(e.target.value)}/><input className="h-11 rounded-xl border border-amber-200 bg-white px-3 outline-none" type="password" placeholder="API key da Evolution" value={configKey} onChange={e=>setConfigKey(e.target.value)}/><button className="btn btn-primary" disabled={configBusy || !configUrl.trim() || configKey.trim().length < 8} onClick={() => void saveGatewayConfig()}>{configBusy ? <Loader2 size={16} className="animate-spin"/> : null}Salvar gateway</button></div></div></div></div>}
-
-    {error && <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><AlertTriangle size={18} className="mt-0.5 shrink-0"/><span>{error}</span></div>}
-
-    <section className="panel mb-4">
-      <div className="panel-title"><div><span className="eyebrow">Capacidade</span><h2>{connected} de {MAX_SESSIONS} números conectados</h2></div><span className={`status ${gatewayConfigured ? (connected ? "status-success" : "status-warning") : "status-neutral"}`}>{gatewayConfigured ? (connected ? "Gateway em operação" : "Gateway pronto") : "Gateway não configurado"}</span></div>
-      <div className="grid grid-cols-2 gap-4 p-4 max-[900px]:grid-cols-1">
-        {slots.map(({ index, account }) => {
-          const connectedNow = account ? isConnected(account) : false;
-          const waiting = account ? isWaiting(account) : false;
-          const instanceName = account?.session_id || `zapflow-${organizationId.slice(0, 8)}-${String(index + 1).padStart(2, "0")}`;
-          const stateLabel = connectedNow ? "Conectado" : waiting ? "Aguardando conexão" : account ? "Desconectado" : "Disponível";
-          const isBusy = busy === instanceName;
-          return <div key={instanceName} className="rounded-2xl border border-[#e2e9e3] bg-white p-4 shadow-[0_7px_24px_rgba(21,47,28,.035)]"><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#edf8f0] text-[#269451]"><Smartphone size={21}/></div><div><strong className="block text-sm text-[#26392d]">{account?.internal_name || slotName(index)}</strong><span className="mt-1 block text-[11px] text-[#87958c]">{account?.phone || "Nenhum telefone identificado"}</span></div></div><span className={`status ${connectedNow ? "status-success" : waiting ? "status-warning" : "status-neutral"}`}>{stateLabel}</span></div><div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-[#f7f9f7] p-3 text-[11px]"><div><span className="block text-[#8a988f]">Distribuição</span><strong className="mt-1 block text-[#304237]">Igualitária</strong></div><div><span className="block text-[#8a988f]">Último sinal</span><strong className="mt-1 block text-[#304237]">{account?.last_seen_at ? new Date(account.last_seen_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong></div></div><div className="mt-4 flex flex-wrap gap-2">{!account && <button className="btn btn-primary flex-1" onClick={() => void openQr(instanceName, true)} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <QrCode size={16}/>}Conectar por QR</button>}{account && !connectedNow && <button className="btn btn-primary flex-1" onClick={() => void openQr(instanceName)} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <QrCode size={16}/>}Gerar novo QR</button>}{account && connectedNow && <button className="btn btn-soft flex-1" onClick={() => void runAction(account, "status")} disabled={isBusy || !gatewayConfigured}>{isBusy ? <Loader2 size={16} className="animate-spin"/> : <RefreshCw size={16}/>}Verificar</button>}{account && <button className="btn btn-soft" title="Desconectar" onClick={() => void runAction(account, "logout")} disabled={isBusy || !gatewayConfigured}><Unplug size={16}/></button>}{account && <button className="btn btn-soft" title="Excluir sessão" onClick={() => void runAction(account, "delete")} disabled={isBusy || !gatewayConfigured}><Trash2 size={16}/></button>}{!account && <button className="btn btn-soft" disabled aria-label="Mais opções"><MoreHorizontal size={16}/></button>}</div></div>;
-        })}
-      </div>
-    </section>
-
-    {modal && <div className="fixed inset-0 z-[100] grid place-items-center bg-black/45 p-4" onMouseDown={event => { if (event.target === event.currentTarget) closeModal(); }}><div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><span className="eyebrow">Conectar sessão</span><h2 className="mt-1 text-xl font-semibold text-[#26392d]">Escaneie o QR no WhatsApp</h2></div><button className="btn btn-soft" onClick={closeModal} aria-label="Fechar"><X size={16}/></button></div><div className="mt-5 grid min-h-72 place-items-center rounded-2xl border border-[#e2e9e3] bg-[#f8faf8] p-5">{modal.loading && <div className="text-center"><Loader2 size={32} className="mx-auto animate-spin text-[#269451]"/><p className="mt-3 text-sm text-[#66756b]">Gerando QR no gateway...</p></div>}{!modal.loading && modal.qr && <img src={modal.qr} alt="QR Code para conectar WhatsApp" className="h-auto w-full max-w-[260px] rounded-xl bg-white p-2"/>}{!modal.loading && modal.error && <div className="text-center text-sm text-amber-800"><AlertTriangle size={30} className="mx-auto mb-3"/><p>{modal.error}</p><button className="btn btn-primary mt-4" onClick={() => void openQr(modal.instanceName)}>Tentar novamente</button></div>}</div><p className="mt-4 text-xs leading-5 text-[#718077]">No celular, abra WhatsApp → Aparelhos conectados → Conectar um aparelho. Esta janela fecha automaticamente quando o gateway confirmar a conexão.</p></div></div>}
-  </>;
+  return <div className="grid gap-5">
+    <div className="page-heading"><div><span className="eyebrow">Central de conexões</span><h1>Seus WhatsApps</h1><p>Cada número tem sua própria conexão e suas conversas. Escolha QR Code ou telefone para começar.</p></div><button className="btn btn-soft" disabled={loading} onClick={() => void refresh()}><RefreshCw size={16}/>Atualizar</button></div>
+    <div className="grid grid-cols-3 gap-3 max-[600px]:grid-cols-1">{[["Conectados", count], ["Cadastrados", accounts.length], ["Disponíveis", Math.max(0, MAX_SESSIONS - accounts.length)]].map(([label, value]) => <div key={label} className="panel p-5"><span className="text-sm text-[#718077]">{label}</span><strong className="mt-2 block text-3xl text-[#247747]">{value}</strong></div>)}</div>
+    {error && <div role="alert" className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><AlertTriangle size={20}/>{error}</div>}
+    <div className="flex items-center justify-between rounded-xl bg-[#eef6f0] p-4 text-sm text-[#355641]"><span>{configured ? "Serviço de conexão configurado" : "Configure o serviço de conexão para adicionar números"}</span><button className="btn btn-soft" onClick={() => setEditing(!editing)}><Settings2 size={16}/>Configuração</button></div>
+    {(!configured || editing) && !loading && <section className="panel grid gap-3 p-5"><h2>Configuração da Evolution API</h2><label className="grid gap-1 text-sm">Endereço do servidor<input className="rounded-xl border p-3" value={configUrl} onChange={e => setConfigUrl(e.target.value)} placeholder="https://evolution.seudominio.com"/></label><label className="grid gap-1 text-sm">Chave de acesso<input type="password" autoComplete="off" className="rounded-xl border p-3" value={configKey} onChange={e => setConfigKey(e.target.value)}/></label><button className="btn btn-primary justify-self-start" disabled={busy || !configUrl || configKey.length < 8} onClick={() => void save()}>Salvar configuração</button></section>}
+    {loading ? <div role="status" className="p-8 text-center">Carregando números...</div> : <section className="grid grid-cols-2 gap-4 max-[800px]:grid-cols-1">{slots.map(({ account, id, label }) => {
+      const online = account ? connected(account) : false;
+      return <article key={id} className={`panel p-5 ${online ? "border-[#a9ddba]" : ""}`}><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className={`grid h-12 w-12 place-items-center rounded-2xl ${online ? "bg-[#dff6e7] text-[#238847]" : "bg-[#f1f4f2] text-[#87978c]"}`}><Smartphone size={23}/></div><div><h2 className="font-semibold text-[#26392d]">{label}</h2><p className="mt-1 text-sm text-[#6b7b70]">{account?.phone ? `+${account.phone}` : online ? "Sincronizando telefone..." : "Nenhum número conectado"}</p></div></div><span className={`status ${online ? "status-success" : "status-neutral"}`}>{online ? "Conectado" : account ? "Desconectado" : "Disponível"}</span></div>
+      <p className="my-4 text-xs text-[#809087]">{online ? "As conversas deste número ficam identificadas no chat." : "Vincule um aparelho para receber e responder mensagens."}</p>
+      <div className="flex flex-wrap gap-2">{online ? <><button className="btn btn-primary" onClick={() => onOpenChat?.(id)}><MessageCircle size={16}/>Abrir conversas</button><button className="btn btn-soft" disabled={busy} onClick={() => void action(account!, "status")}><RefreshCw size={16}/>Verificar</button></> : <><button className="btn btn-primary" disabled={busy || !configured} onClick={() => open(id, label, "qr")}><QrCode size={16}/>QR Code</button><button className="btn btn-soft" disabled={busy || !configured} onClick={() => open(id, label, "phone")}><Phone size={16}/>Pelo telefone</button></>}{account && <><button className="btn btn-soft" aria-label={`Desconectar ${label}`} disabled={busy} onClick={() => void action(account, "logout")}><Unplug size={16}/></button><button className="btn btn-soft" aria-label={`Excluir ${label}`} disabled={busy} onClick={() => void action(account, "delete")}><Trash2 size={16}/></button></>}</div></article>;
+    })}</section>}
+    <Dialog open={!!modal} onOpenChange={value => { if (!value) close(); }}><DialogContent className="max-w-md rounded-2xl bg-white p-6"><DialogTitle>Conectar {modal?.label}</DialogTitle><DialogDescription>{modal?.mode === "phone" ? "Informe o número com código do país e confirme o código no próprio WhatsApp. Não é um código enviado por SMS." : "No celular, abra WhatsApp → Aparelhos conectados → Conectar um aparelho e escaneie o QR."}</DialogDescription>
+      {modal && <><div className="flex gap-2"><button className={`btn ${modal.mode === "qr" ? "btn-primary" : "btn-soft"}`} onClick={() => open(modal.instanceName, modal.label, "qr")}><QrCode size={16}/>QR Code</button><button className={`btn ${modal.mode === "phone" ? "btn-primary" : "btn-soft"}`} onClick={() => open(modal.instanceName, modal.label, "phone")}><Phone size={16}/>Telefone</button></div>
+      {modal.mode === "phone" && <label className="grid gap-2 text-sm">Telefone com país e DDD<input type="tel" placeholder="55 27 99999-9999" className="rounded-xl border p-3" disabled={modal.loading || !!modal.code} value={modal.phone} onChange={e => setModal({ ...modal, phone: e.target.value })}/></label>}
+      <div className="grid min-h-48 place-items-center rounded-2xl bg-[#f3f8f4] p-5" aria-live="polite">{modal.loading ? <div className="text-center"><Loader2 className="mx-auto animate-spin text-[#269451]"/><p className="mt-3 text-sm">Preparando conexão. Aguarde...</p></div> : modal.mode === "phone" && modal.code ? <div className="text-center"><strong className="font-mono text-3xl tracking-widest text-[#247747]">{modal.code}</strong><p className="mt-4 text-sm">No WhatsApp, toque em Conectar um aparelho → Conectar com número de telefone e digite este código.</p></div> : modal.mode === "qr" && modal.qr ? <img src={modal.qr} alt="QR Code de conexão do WhatsApp" className="w-64 max-w-full bg-white p-2"/> : <Smartphone size={40} className="text-[#89a591]"/>}</div>
+      {modal.error && <p role="alert" className="text-sm text-amber-800">{modal.error}</p>}
+      <p className="text-xs text-[#718077]">A confirmação aparece automaticamente. O QR é atualizado enquanto esta janela estiver aberta.</p><button className="btn btn-primary" disabled={modal.loading || busy} onClick={() => void connect(modal)}><RefreshCw size={16}/>{modal.code || modal.qr ? "Gerar novo código" : "Gerar código"}</button></>}
+    </DialogContent></Dialog>
+  </div>;
 }

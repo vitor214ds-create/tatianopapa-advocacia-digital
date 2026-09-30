@@ -11,6 +11,7 @@ import {
   sendChatText,
   type ChatMessage,
   type ChatThread,
+  type WhatsAppAccount,
 } from "../lib/zapflow-api";
 
 function formatClock(value: string) {
@@ -68,7 +69,14 @@ function AudioMessage({
   </button>;
 }
 
-export function ChatPage({ organizationId }: { organizationId: string }) {
+export function ChatPage({ organizationId, initialSession = "all" }: { organizationId: string; initialSession?: string }) {
+  const [accounts, setAccounts] = useState<WhatsAppAccount[]>([]);
+  const [sessionFilter, setSessionFilter] = useState(initialSession);
+  const [webhookReady, setWebhookReady] = useState(true);
+  const selectedRef = useRef<string | null>(null);
+  const messagesFlight = useRef<string | null>(null);
+  const threadsFlight = useRef(false);
+  const mounted = useRef(true);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -84,48 +92,61 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
   const chunksRef = useRef<Blob[]>([]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  selectedRef.current = selectedId;
   const selected = threads.find(item => item.id === selectedId) || null;
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return threads;
-    return threads.filter(item =>
+    const scoped = threads.filter(item => sessionFilter === "all" || item.session_id === sessionFilter);
+    if (!term) return scoped;
+    return scoped.filter(item =>
       (item.contact_name || "").toLowerCase().includes(term) ||
       item.contact_phone.includes(term) ||
       (item.account_name || "").toLowerCase().includes(term)
     );
-  }, [threads, search]);
+  }, [threads, search, sessionFilter]);
 
   async function refreshThreads(silent = false) {
+    if (threadsFlight.current) return;
+    threadsFlight.current = true;
     if (!silent) setLoadingThreads(true);
     try {
       const data = await listChatThreads(organizationId);
+      if (!mounted.current) return;
+      setAccounts(data.accounts || []);
+      setWebhookReady(data.webhookReady);
       setThreads(data.threads || []);
-      setSelectedId(current => current || data.threads?.[0]?.id || null);
+
     } catch (err) {
       if (!silent) setError(err instanceof Error ? err.message : "Não foi possível carregar as conversas.");
     } finally {
-      if (!silent) setLoadingThreads(false);
+      threadsFlight.current = false;
+      if (mounted.current && !silent) setLoadingThreads(false);
     }
   }
 
   async function refreshMessages(threadId: string, silent = false) {
+    if (messagesFlight.current === threadId) return;
+    messagesFlight.current = threadId;
     if (!silent) setLoadingMessages(true);
     try {
       const data = await listChatMessages(organizationId, threadId);
+      if (!mounted.current || selectedRef.current !== threadId) return;
       setMessages(data.messages || []);
       await markChatRead(organizationId, threadId).catch(() => undefined);
       setThreads(current => current.map(item => item.id === threadId ? { ...item, unread_count: 0 } : item));
     } catch (err) {
       if (!silent) setError(err instanceof Error ? err.message : "Não foi possível carregar as mensagens.");
     } finally {
-      if (!silent) setLoadingMessages(false);
+      if (messagesFlight.current === threadId) messagesFlight.current = null;
+      if (mounted.current && selectedRef.current === threadId && !silent) setLoadingMessages(false);
     }
   }
 
   useEffect(() => {
+    mounted.current = true;
     void refreshThreads();
     const id = window.setInterval(() => void refreshThreads(true), 4000);
-    return () => window.clearInterval(id);
+    return () => { mounted.current = false; window.clearInterval(id); };
   }, [organizationId]);
 
   useEffect(() => {
@@ -133,6 +154,8 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
       setMessages([]);
       return;
     }
+    setMessages([]);
+    setText("");
     void refreshMessages(selectedId);
     const id = window.setInterval(() => void refreshMessages(selectedId, true), 3000);
     return () => window.clearInterval(id);
@@ -140,10 +163,10 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+  }, [messages.length, selectedId]);
 
   useEffect(() => () => {
-    recorderRef.current?.stop();
+    if (recorderRef.current) { recorderRef.current.onstop = null; if (recorderRef.current.state !== "inactive") recorderRef.current.stop(); }
     streamRef.current?.getTracks().forEach(track => track.stop());
   }, []);
 
@@ -151,14 +174,15 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
     if (!selectedId || !text.trim() || sending) return;
     setSending(true);
     setError(null);
+    const targetId = selectedId;
     const value = text.trim();
     setText("");
     try {
       const result = await sendChatText(organizationId, selectedId, value);
-      setMessages(current => [...current.filter(item => item.id !== result.message.id), result.message]);
+      if (mounted.current && selectedRef.current === result.message.thread_id) setMessages(current => [...current.filter(item => item.id !== result.message.id), result.message]);
       await refreshThreads(true);
     } catch (err) {
-      setText(value);
+      if (selectedRef.current === targetId) setText(value);
       setError(err instanceof Error ? err.message : "Não foi possível enviar a mensagem.");
     } finally {
       setSending(false);
@@ -181,6 +205,7 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mounted.current || selectedRef.current !== selectedId) { stream.getTracks().forEach(track => track.stop()); return; }
       streamRef.current = stream;
       chunksRef.current = [];
 
@@ -214,7 +239,7 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
             base64,
             blob.type || "audio/webm",
           );
-          setMessages(current => [...current.filter(item => item.id !== result.message.id), result.message]);
+          if (mounted.current && selectedRef.current === result.message.thread_id) setMessages(current => [...current.filter(item => item.id !== result.message.id), result.message]);
           await refreshThreads(true);
         } catch (err) {
           setError(err instanceof Error ? err.message : "Não foi possível enviar o áudio.");
@@ -249,6 +274,8 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
 
     {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
+    {!webhookReady && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">O recebimento de mensagens ainda não foi confirmado. Verifique a conexão dos números na aba WhatsApp.</div>}
+    <div className="flex flex-wrap gap-2" aria-label="Filtrar por WhatsApp"><button className={`btn ${sessionFilter === "all" ? "btn-primary" : "btn-soft"}`} disabled={recording || sending} onClick={() => { setSessionFilter("all"); setSelectedId(null); }}>Todos os números</button>{accounts.map(account => <button key={account.id} disabled={recording || sending} className={`btn ${sessionFilter === account.session_id ? "btn-primary" : "btn-soft"}`} onClick={() => { setSessionFilter(account.session_id); setSelectedId(null); }}><span className={`h-2 w-2 rounded-full ${account.connection_status === "CONNECTED" ? "bg-green-500" : "bg-gray-400"}`}/>{account.internal_name || "WhatsApp"}{account.phone ? ` • +${account.phone}` : ""}</button>)}</div>
     <section className="panel overflow-hidden">
       <div className="grid min-h-[650px] grid-cols-[340px_1fr] max-[900px]:grid-cols-1">
         <aside className="border-r border-[#e7ece8] bg-white max-[900px]:border-b max-[900px]:border-r-0">
@@ -279,7 +306,8 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
               : filtered.length
                 ? filtered.map(thread => <button
                     key={thread.id}
-                    onClick={() => setSelectedId(thread.id)}
+                    disabled={recording || sending}
+                  onClick={() => setSelectedId(thread.id)}
                     className={`flex w-full gap-3 border-b border-[#f0f3f1] p-4 text-left transition hover:bg-[#f8faf8] ${selectedId === thread.id ? "bg-[#f0f8f2]" : ""}`}
                   >
                     <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#dcefe2] text-sm font-bold text-[#247747]">
@@ -295,7 +323,7 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
                         {thread.unread_count > 0 && <span className="grid h-5 min-w-5 place-items-center rounded-full bg-[#23a455] px-1 text-[10px] font-bold text-white">{thread.unread_count}</span>}
                       </div>
                       <span className="mt-1 block truncate text-[10px] text-[#9aa59e]">
-                        via {thread.account_name || thread.account_phone || thread.session_id}
+                        via {thread.account_name || "WhatsApp"} {thread.account_phone ? `• +${thread.account_phone}` : ""}
                       </span>
                     </div>
                   </button>)
@@ -317,7 +345,7 @@ export function ChatPage({ organizationId }: { organizationId: string }) {
                 <div className="min-w-0">
                   <strong className="block truncate text-sm text-[#25372c]">{selected.contact_name || selected.contact_phone}</strong>
                   <span className="block truncate text-[11px] text-[#809087]">
-                    {selected.contact_phone} • respondendo por {selected.account_name || selected.account_phone || selected.session_id}
+                    {selected.contact_phone} • respondendo por {selected.account_name || "WhatsApp"} {selected.account_phone ? `(+${selected.account_phone})` : ""}
                   </span>
                 </div>
               </div>

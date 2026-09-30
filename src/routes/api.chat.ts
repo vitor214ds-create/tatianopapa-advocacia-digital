@@ -1,3 +1,6 @@
+import { serverFetch } from "../lib/server-fetch";
+import { accountLabel } from "../lib/gateway/accounts";
+import { getOrganizationGatewayConfig } from "../lib/gateway/context";
 import { createFileRoute } from "@tanstack/react-router";
 import { authorizeOrganization } from "../lib/server-auth";
 import {
@@ -34,33 +37,15 @@ function supabase(request: Request) {
   };
 }
 
-function environmentGatewayConfig(): EvolutionConfig | null {
-  const baseUrl = normalizeEvolutionBaseUrl(runtimeEnv("EVOLUTION_API_URL"));
-  const apiKey = runtimeEnv("EVOLUTION_API_KEY")?.trim();
-  return baseUrl && apiKey ? { baseUrl, apiKey } : null;
-}
-
 async function gatewayConfig(request: Request, organizationId: string): Promise<EvolutionConfig> {
-  const environment = environmentGatewayConfig();
-  if (environment) return environment;
-
-  const { url, headers } = supabase(request);
-  const response = await fetch(`${url}/rest/v1/rpc/get_evolution_gateway_config`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ p_organization_id: organizationId }),
-  });
-  if (!response.ok) throw new Error("Não foi possível carregar a configuração da Evolution");
-  const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
-  const baseUrl = normalizeEvolutionBaseUrl(rows[0]?.base_url);
-  const apiKey = rows[0]?.api_key?.trim();
-  if (!baseUrl || !apiKey) throw new Error("Gateway Evolution ainda não configurado.");
-  return { baseUrl, apiKey };
+  const config = await getOrganizationGatewayConfig(request, organizationId);
+  if (!config) throw new Error("Gateway Evolution ainda não configurado.");
+  return config;
 }
 
 async function webhookSecret(request: Request, organizationId: string) {
   const { url, headers } = supabase(request);
-  const response = await fetch(`${url}/rest/v1/rpc/get_or_create_evolution_webhook_secret`, {
+  const response = await serverFetch(`${url}/rest/v1/rpc/get_or_create_evolution_webhook_secret`, {
     method: "POST",
     headers,
     body: JSON.stringify({ p_organization_id: organizationId }),
@@ -83,7 +68,7 @@ async function ensureInboundWebhook(request: Request, organizationId: string) {
   if (now - lastSync < 60_000) return true;
 
   const { url, headers } = supabase(request);
-  const accountsResponse = await fetch(
+  const accountsResponse = await serverFetch(
     `${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&is_enabled=eq.true&connection_status=eq.CONNECTED&select=session_id`,
     { headers },
   );
@@ -127,7 +112,7 @@ async function threadForOrg(request: Request, organizationId: string, threadId: 
   const select = encodeURIComponent(
     "id,organization_id,whatsapp_account_id,session_id,contact_phone,contact_name,remote_jid,last_message_preview,last_message_at,last_direction,unread_count",
   );
-  const response = await fetch(
+  const response = await serverFetch(
     `${url}/rest/v1/zapflow_chat_threads?id=eq.${encodeURIComponent(threadId)}&organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&limit=1`,
     { headers },
   );
@@ -168,7 +153,7 @@ async function insertOutgoing(
     status: "SENT",
     sent_at: now,
   };
-  const response = await fetch(`${url}/rest/v1/zapflow_chat_messages?on_conflict=organization_id,session_id,provider_message_id`, {
+  const response = await serverFetch(`${url}/rest/v1/zapflow_chat_messages?on_conflict=organization_id,session_id,provider_message_id`, {
     method: "POST",
     headers: { ...headers, Prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(body),
@@ -176,7 +161,7 @@ async function insertOutgoing(
   if (!response.ok) throw new Error(`Mensagem enviada, mas não foi possível salvar no Chat: ${await response.text()}`);
   const rows = await response.json() as any[];
 
-  await fetch(
+  await serverFetch(
     `${url}/rest/v1/zapflow_chat_threads?id=eq.${encodeURIComponent(thread.id)}&organization_id=eq.${encodeURIComponent(organizationId)}`,
     {
       method: "PATCH",
@@ -218,15 +203,15 @@ export const Route = createFileRoute("/api/chat")({
             const select = encodeURIComponent(
               "id,organization_id,whatsapp_account_id,session_id,contact_phone,contact_name,remote_jid,last_message_preview,last_message_at,last_direction,unread_count",
             );
-            const response = await fetch(
+            const response = await serverFetch(
               `${url}/rest/v1/zapflow_chat_threads?organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&order=last_message_at.desc&limit=200`,
               { headers },
             );
             if (!response.ok) throw new Error("Falha ao carregar conversas");
             const threads = await response.json() as any[];
 
-            const accountsResponse = await fetch(
-              `${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&select=id,internal_name,phone,session_id`,
+            const accountsResponse = await serverFetch(
+              `${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&select=id,internal_name,phone,session_id,connection_status,is_enabled`,
               { headers },
             );
             const accounts = accountsResponse.ok ? await accountsResponse.json() as any[] : [];
@@ -235,9 +220,10 @@ export const Route = createFileRoute("/api/chat")({
             return Response.json({
               ok: true,
               webhookReady,
+              accounts: accounts.map(account => ({ ...account, internal_name: accountLabel(account) })),
               threads: threads.map(thread => ({
                 ...thread,
-                account_name: accountMap.get(thread.whatsapp_account_id)?.internal_name || null,
+                account_name: accountMap.has(thread.whatsapp_account_id) ? accountLabel(accountMap.get(thread.whatsapp_account_id)) : null,
                 account_phone: accountMap.get(thread.whatsapp_account_id)?.phone || null,
               })),
             });
@@ -250,19 +236,20 @@ export const Route = createFileRoute("/api/chat")({
             const select = encodeURIComponent(
               "id,thread_id,provider_message_id,remote_jid,direction,message_type,text_content,mime_type,media_seconds,status,sent_at",
             );
-            const response = await fetch(
-              `${url}/rest/v1/zapflow_chat_messages?organization_id=eq.${encodeURIComponent(organizationId)}&thread_id=eq.${encodeURIComponent(threadId)}&select=${select}&order=sent_at.asc&limit=500`,
+            const response = await serverFetch(
+              `${url}/rest/v1/zapflow_chat_messages?organization_id=eq.${encodeURIComponent(organizationId)}&thread_id=eq.${encodeURIComponent(threadId)}&select=${select}&order=sent_at.desc&limit=500`,
               { headers },
             );
             if (!response.ok) throw new Error("Falha ao carregar mensagens");
-            return Response.json({ ok: true, messages: await response.json() });
+            const messages = await response.json() as any[];
+            return Response.json({ ok: true, messages: messages.reverse() });
           }
 
           if (action === "media") {
             const messageId = requestUrl.searchParams.get("messageId");
             if (!messageId) return Response.json({ error: "messageId é obrigatório" }, { status: 400 });
             const select = encodeURIComponent("id,session_id,provider_message_id,remote_jid,direction,message_type,mime_type");
-            const response = await fetch(
+            const response = await serverFetch(
               `${url}/rest/v1/zapflow_chat_messages?id=eq.${encodeURIComponent(messageId)}&organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&limit=1`,
               { headers },
             );
@@ -313,7 +300,7 @@ export const Route = createFileRoute("/api/chat")({
             audioBase64?: string;
             mimeType?: string;
           };
-          if (!body.organizationId || !body.threadId || !body.action) {
+          if (!body || typeof body.organizationId !== "string" || typeof body.threadId !== "string" || typeof body.action !== "string") {
             return Response.json({ error: "Dados incompletos" }, { status: 400 });
           }
 
@@ -322,7 +309,7 @@ export const Route = createFileRoute("/api/chat")({
           const { url, headers } = supabase(request);
 
           if (body.action === "markRead") {
-            const response = await fetch(
+            const response = await serverFetch(
               `${url}/rest/v1/zapflow_chat_threads?id=eq.${encodeURIComponent(body.threadId)}&organization_id=eq.${encodeURIComponent(body.organizationId)}`,
               {
                 method: "PATCH",
@@ -334,6 +321,13 @@ export const Route = createFileRoute("/api/chat")({
             return Response.json({ ok: true });
           }
 
+          // Never accept a sender chosen by the browser: bind it to the stored thread.
+          const accountResponse = await serverFetch(`${url}/rest/v1/whatsapp_accounts?id=eq.${encodeURIComponent(thread.whatsapp_account_id)}&organization_id=eq.${encodeURIComponent(body.organizationId)}&select=session_id,connection_status,is_enabled&limit=1`, { headers });
+          if (!accountResponse.ok) throw new Error("Não foi possível verificar o número de origem.");
+          const [account] = await accountResponse.json() as any[];
+          if (!account || account.session_id !== thread.session_id || account.is_enabled === false || !["CONNECTED", "OPEN"].includes(String(account.connection_status).toUpperCase())) {
+            return Response.json({ error: "O WhatsApp desta conversa está desconectado. Reconecte esse mesmo número antes de responder." }, { status: 409 });
+          }
           const config = await gatewayConfig(request, body.organizationId);
 
           if (body.action === "sendText") {

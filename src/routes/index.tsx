@@ -759,6 +759,7 @@ function CampaignsPage({
 
 function ZapFlowApp() {
   const navigateRouter = useNavigate();
+  const [chatSession, setChatSession] = useState<string>("all");
   const [section, setSection] = useState<Section>("Dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
@@ -877,8 +878,8 @@ function ZapFlowApp() {
         />}
         {section === "Campanhas" && <CampaignsPage accounts={accounts} organizationId={organizationId}/>}
         {section === "Templates" && <TemplatesPage organizationId={organizationId}/>}
-        {section === "Chat" && <ChatPage organizationId={organizationId}/>}
-        {section === "WhatsApp" && <WhatsAppSessionManager organizationId={organizationId} onConnectedCountChange={() => void refreshAccounts()}/>}
+        {section === "Chat" && <ChatPage organizationId={organizationId} initialSession={chatSession}/>}
+        {section === "WhatsApp" && <WhatsAppSessionManager organizationId={organizationId} onConnectedCountChange={() => void refreshAccounts()} onOpenChat={sessionId => { setChatSession(sessionId); setSection("Chat"); }}/>}
 
         <footer className="app-footer">
           <span><ShieldCheck size={12}/>ZapFlow • operação protegida por fila persistente</span>

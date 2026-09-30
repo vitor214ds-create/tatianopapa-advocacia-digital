@@ -1,3 +1,5 @@
+import { serverFetch } from "../lib/server-fetch";
+import { messagePayloads } from "../lib/gateway/webhook-payload";
 import { createFileRoute } from "@tanstack/react-router";
 import { supabasePublicConfig } from "../lib/runtime-env";
 
@@ -56,7 +58,7 @@ export const Route = createFileRoute("/api/gateway-webhook")({
           }
 
           const { url, key } = supabasePublicConfig();
-          const response = await fetch(`${url}/rest/v1/rpc/ingest_evolution_webhook`, {
+          const response = await serverFetch(`${url}/rest/v1/rpc/ingest_evolution_webhook`, {
             method: "POST",
             headers: {
               apikey: key,
@@ -77,10 +79,12 @@ export const Route = createFileRoute("/api/gateway-webhook")({
           }
 
           const stored = Boolean(await response.json());
+          if (!stored) return Response.json({ error: "Webhook não autorizado ou sessão desconhecida" }, { status: 403 });
 
           let chatStored = false;
           if (upperEventIncludesMessages(event)) {
-            const chatResponse = await fetch(`${url}/rest/v1/rpc/zapflow_ingest_chat_message`, {
+            for (const messagePayload of messagePayloads(payload)) {
+            const chatResponse = await serverFetch(`${url}/rest/v1/rpc/zapflow_ingest_chat_message`, {
               method: "POST",
               headers: {
                 apikey: key,
@@ -91,16 +95,18 @@ export const Route = createFileRoute("/api/gateway-webhook")({
                 p_secret: secret,
                 p_instance_name: instanceName,
                 p_event: event,
-                p_payload: payload,
+                p_payload: messagePayload,
               }),
             });
             if (chatResponse.ok) {
               chatStored = Boolean(await chatResponse.json());
             } else {
-              console.error("Falha ao persistir mensagem no Chat", chatResponse.status, await chatResponse.text());
+              console.error("Falha ao persistir mensagem no Chat", chatResponse.status);
+              return Response.json({ error: "Não foi possível salvar a mensagem. Tente novamente." }, { status: 503 });
             }
           }
 
+          }
           return Response.json({ ok: true, stored, chatStored });
         } catch (error) {
           console.error("Gateway webhook failed", error);

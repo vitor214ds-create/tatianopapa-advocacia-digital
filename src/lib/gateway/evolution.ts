@@ -9,6 +9,8 @@ export type GatewayInstance = {
   instanceName: string;
   status?: string;
   qrcode?: string | null;
+  pairingCode?: string | null;
+  phone?: string | null;
   raw?: unknown;
 };
 
@@ -106,7 +108,7 @@ async function evolutionFetch(
       apikey: apiKey,
       ...(init?.headers || {}),
     },
-  });
+  }).catch(() => { throw new Error("Não foi possível alcançar a Evolution API. Verifique se o servidor está online e se o endereço e a porta estão corretos."); });
 
   const text = await response.text();
   let data: unknown = null;
@@ -118,7 +120,7 @@ async function evolutionFetch(
 
   if (!response.ok) {
     throw new Error(
-      `Evolution API ${response.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`,
+      `Evolution API ${response.status}: ${response.status === 401 || response.status === 403 ? "A chave do gateway foi recusada. Revise a configuração." : response.status === 404 ? "Sessão não encontrada no gateway." : response.status === 429 ? "Muitas solicitações. Aguarde alguns segundos." : "O gateway não conseguiu concluir a operação."}`,
     );
   }
 
@@ -130,15 +132,18 @@ export async function createInstance(
   webhookUrl?: string,
   config?: EvolutionConfig | null,
   webhookHeaders?: Record<string, string>,
+  number?: string,
 ): Promise<GatewayInstance> {
   const body: Record<string, unknown> = {
     instanceName,
     qrcode: true,
+    ...(number ? { number } : {}),
     integration: "WHATSAPP-BAILEYS",
   };
 
   if (webhookUrl) {
     body.webhook = {
+      enabled: true,
       url: webhookUrl,
       byEvents: false,
       base64: false,
@@ -155,7 +160,7 @@ export async function createInstance(
 
   return {
     instanceName,
-    qrcode: raw?.qrcode?.base64 || raw?.qrcode || raw?.base64 || null,
+    ...connectionPayload(raw),
     status: raw?.instance?.status || raw?.status,
     raw,
   };
@@ -164,16 +169,17 @@ export async function createInstance(
 export async function getQr(
   instanceName: string,
   config?: EvolutionConfig | null,
+  number?: string,
 ): Promise<GatewayInstance> {
   const raw = await evolutionFetch(
-    `/instance/connect/${encodeURIComponent(instanceName)}`,
+    `/instance/connect/${encodeURIComponent(instanceName)}${number ? `?number=${encodeURIComponent(number)}` : ""}`,
     undefined,
     config,
   );
   return {
     instanceName,
-    qrcode: raw?.base64 || raw?.qrcode?.base64 || raw?.qrcode || null,
-    status: raw?.status,
+    ...connectionPayload(raw),
+    status: raw?.instance?.state || raw?.state || raw?.status,
     raw,
   };
 }
@@ -296,4 +302,38 @@ export async function setInstanceWebhook(
     },
     config,
   );
+}
+
+export function connectionPayload(raw: any) {
+  const candidates = [raw?.base64, raw?.qrcode?.base64, raw?.qrcode];
+  return {
+    qrcode: candidates.find(value => typeof value === "string" && value.length > 100) || null,
+    pairingCode: typeof (raw?.pairingCode ?? raw?.qrcode?.pairingCode) === "string"
+      ? (raw.pairingCode ?? raw.qrcode.pairingCode) : null,
+  };
+}
+
+export function normalizePairingPhone(value: unknown) {
+  if (typeof value !== "string" || /[^+\d\s().-]/.test(value)) return null;
+  const digits = value.replace(/\D/g, "");
+  return /^[1-9]\d{9,14}$/.test(digits) ? digits : null;
+}
+
+export function instancePhone(value: unknown) {
+  if (typeof value !== "string") return null;
+  const digits = value.split("@")[0].split(":")[0].replace(/\D/g, "");
+  return /^[1-9]\d{7,14}$/.test(digits) ? digits : null;
+}
+
+export async function fetchInstances(config?: EvolutionConfig | null) {
+  const raw = await evolutionFetch("/instance/fetchInstances", undefined, config);
+  if (!Array.isArray(raw)) throw new Error("O gateway retornou uma lista de sessões inválida.");
+  return raw.map(item => {
+    const instance = item.instance || item;
+    return {
+      instanceName: instance.instanceName || instance.name,
+      status: instance.connectionStatus || instance.state || instance.status,
+      phone: instancePhone(instance.ownerJid || instance.owner || instance.number),
+    } as GatewayInstance;
+  });
 }

@@ -1,3 +1,4 @@
+import { serverFetch } from "./server-fetch";
 import { supabasePublicConfig } from "./runtime-env";
 
 export type AuthorizedUser = { userId: string; organizationId: string; role: string };
@@ -20,7 +21,7 @@ export async function authorizeOrganization(request: Request, organizationId: st
   if (!token) throw new Response("Não autenticado", { status: 401 });
 
   const { url, key } = supabasePublicConfig();
-  const userResponse = await fetch(`${url}/auth/v1/user`, {
+  const userResponse = await serverFetch(`${url}/auth/v1/user`, {
     headers: { apikey: key, Authorization: `Bearer ${token}` },
   });
   if (!userResponse.ok) throw new Response("Sessão inválida", { status: 401 });
@@ -28,7 +29,7 @@ export async function authorizeOrganization(request: Request, organizationId: st
   const user = await userResponse.json() as { id?: string };
   if (!user.id) throw new Response("Usuário inválido", { status: 401 });
 
-  const membershipResponse = await fetch(
+  const membershipResponse = await serverFetch(
     `${url}/rest/v1/organization_members?organization_id=eq.${encodeURIComponent(organizationId)}&user_id=eq.${encodeURIComponent(user.id)}&select=role&limit=1`,
     { headers: { apikey: key, Authorization: `Bearer ${token}` } },
   );

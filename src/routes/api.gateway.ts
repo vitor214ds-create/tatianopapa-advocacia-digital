@@ -1,7 +1,11 @@
+import { serverFetch } from "../lib/server-fetch";
+import { getSupabaseConfig, getOrganizationGatewayConfig, getOrganizationWebhookSecret } from "../lib/gateway/context";
 import { createFileRoute } from "@tanstack/react-router";
 import { authorizeOrganization, requireAdmin } from "../lib/server-auth";
 import {
   createInstance,
+  fetchInstances,
+  normalizePairingPhone,
   deleteInstance,
   getConnectionState,
   getQr,
@@ -13,91 +17,12 @@ import {
 } from "../lib/gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
 
-function accessToken(request: Request) {
-  const authorization = request.headers.get("authorization");
-  if (authorization?.startsWith("Bearer ")) return authorization.slice(7);
-
-  const cookie = (request.headers.get("cookie") || "")
-    .split(";")
-    .map(value => value.trim())
-    .find(value => value.startsWith("zapflow_access_token="));
-
-  return cookie ? decodeURIComponent(cookie.split("=").slice(1).join("=")) : null;
-}
-
-function getSupabaseConfig(request: Request) {
-  const { url, key } = supabasePublicConfig();
-  const token = accessToken(request);
-  if (!token) throw new Response("Não autenticado", { status: 401 });
-
-  return {
-    url,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  };
-}
-
-function environmentGatewayConfig(): EvolutionConfig | null {
-  const baseUrl = normalizeEvolutionBaseUrl(runtimeEnv("EVOLUTION_API_URL"));
-  const apiKey = runtimeEnv("EVOLUTION_API_KEY")?.trim();
-  return baseUrl && apiKey ? { baseUrl, apiKey } : null;
-}
-
-function evolutionNotFound(error: unknown) {
-  return error instanceof Error && /Evolution API 404\b/.test(error.message);
-}
-
-async function getOrganizationGatewayConfig(request: Request, organizationId: string): Promise<EvolutionConfig | null> {
-  const { url, headers } = getSupabaseConfig(request);
-  const response = await fetch(`${url}/rest/v1/rpc/get_evolution_gateway_config`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ p_organization_id: organizationId }),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    console.error("Falha ao carregar gateway da organização", response.status, detail);
-    throw new Error("Não foi possível carregar a configuração da Evolution");
-  }
-
-  const rows = await response.json() as Array<{ base_url?: string | null; api_key?: string | null }>;
-  const row = rows[0];
-  const normalizedUrl = normalizeEvolutionBaseUrl(row?.base_url);
-  if (normalizedUrl && row?.api_key) {
-    return { baseUrl: normalizedUrl, apiKey: row.api_key };
-  }
-
-  // Sem configuração específica no Vault, usa a configuração global do Railway.
-  return environmentGatewayConfig();
-}
-
-async function getOrganizationWebhookSecret(request: Request, organizationId: string) {
-  const { url, headers } = getSupabaseConfig(request);
-  const response = await fetch(`${url}/rest/v1/rpc/get_or_create_evolution_webhook_secret`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ p_organization_id: organizationId }),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    console.error("Falha ao obter segredo de webhook Evolution", response.status, detail);
-    throw new Error("Não foi possível preparar o webhook da Evolution");
-  }
-  const secret = await response.json() as string;
-  if (!secret) throw new Error("Webhook da Evolution não retornou segredo");
-  return secret;
-}
-
 async function saveOrganizationGatewayConfig(request: Request, organizationId: string, baseUrl: string, apiKey: string) {
   const normalizedUrl = normalizeEvolutionBaseUrl(baseUrl);
   if (!normalizedUrl) throw new Error("URL da Evolution inválida");
 
   const { url, headers } = getSupabaseConfig(request);
-  const response = await fetch(`${url}/rest/v1/rpc/set_evolution_gateway_config`, {
+  const response = await serverFetch(`${url}/rest/v1/rpc/set_evolution_gateway_config`, {
     method: "POST",
     headers,
     body: JSON.stringify({ p_organization_id: organizationId, p_base_url: normalizedUrl, p_api_key: apiKey }),
@@ -111,14 +36,14 @@ async function saveOrganizationGatewayConfig(request: Request, organizationId: s
 async function listAccounts(request: Request, organizationId: string) {
   const { url, headers } = getSupabaseConfig(request);
   const select = encodeURIComponent("id,internal_name,phone,session_id,status,connection_status,session_status,distribution_weight,weight,is_enabled,reconnect_required,last_seen_at,connected_at,qr_expires_at,created_at,updated_at");
-  const response = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&order=created_at.asc`, { headers });
+  const response = await serverFetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&select=${select}&order=created_at.asc`, { headers });
   if (!response.ok) throw new Error(`Falha ao carregar sessões: ${await response.text()}`);
   return await response.json() as any[];
 }
 
 async function reserveAccount(request: Request, organizationId: string, instanceName: string) {
   const { url, headers } = getSupabaseConfig(request);
-  const response = await fetch(`${url}/rest/v1/rpc/zapflow_reserve_whatsapp_account`, {
+  const response = await serverFetch(`${url}/rest/v1/rpc/zapflow_reserve_whatsapp_account`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -141,7 +66,7 @@ async function reserveAccount(request: Request, organizationId: string, instance
 
 async function removeReservedAccount(request: Request, organizationId: string, instanceName: string) {
   const { url, headers } = getSupabaseConfig(request);
-  await fetch(
+  await serverFetch(
     `${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}`,
     { method: "DELETE", headers },
   );
@@ -149,7 +74,7 @@ async function removeReservedAccount(request: Request, organizationId: string, i
 
 async function patchAccount(request: Request, organizationId: string, instanceName: string, patch: Record<string, unknown>) {
   const { url, headers } = getSupabaseConfig(request);
-  const response = await fetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}`, {
+  const response = await serverFetch(`${url}/rest/v1/whatsapp_accounts?organization_id=eq.${encodeURIComponent(organizationId)}&session_id=eq.${encodeURIComponent(instanceName)}`, {
     method: "PATCH",
     headers,
     body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
@@ -178,6 +103,8 @@ async function syncInstanceWebhook(
   return true;
 }
 
+function evolutionNotFound(error: unknown) { return error instanceof Error && /Evolution API 404\b/.test(error.message); }
+
 export const Route = createFileRoute("/api/gateway")({
   server: {
     handlers: {
@@ -190,37 +117,31 @@ export const Route = createFileRoute("/api/gateway")({
           const gatewayConfig = await getOrganizationGatewayConfig(request, organizationId);
           const accounts = await listAccounts(request, organizationId);
 
-          const connectedAccounts = accounts.filter(account => {
-            const state = String(
-              account.connection_status || account.session_status || account.status || "",
-            ).toUpperCase();
-            return state === "CONNECTED" || state === "OPEN";
-          });
-
-          const webhookSync = await Promise.all(
-            connectedAccounts.map(async account => {
-              try {
-                await syncInstanceWebhook(
-                  request,
-                  organizationId,
-                  account.session_id,
-                  gatewayConfig,
-                );
-                return { sessionId: account.session_id, ok: true };
-              } catch (error) {
-                console.error("Falha ao sincronizar webhook da sessão", account.session_id, error);
-                return { sessionId: account.session_id, ok: false };
-              }
-            }),
-          );
+          let gatewayError: string | null = null;
+          if (gatewayConfig && accounts.length) {
+            try {
+              const remote = await fetchInstances(gatewayConfig);
+              await Promise.all(accounts.map(async account => {
+                const instance = remote.find(item => item.instanceName === account.session_id);
+                if (!instance) return;
+                const state = String(instance.status || "").toUpperCase();
+                const normalized = ["OPEN", "CONNECTED"].includes(state) ? "CONNECTED" : state === "CONNECTING" ? "CONNECTING" : "DISCONNECTED";
+                const patch = {
+                  connection_status: normalized, session_status: normalized,
+                  ...(instance.phone ? { phone: instance.phone } : {}),
+                  reconnect_required: normalized === "DISCONNECTED", last_seen_at: new Date().toISOString(),
+                };
+                await patchAccount(request, organizationId, account.session_id, patch);
+                Object.assign(account, patch);
+              }));
+            } catch (error) { gatewayError = error instanceof Error ? error.message : "Gateway indisponível"; }
+          }
 
           return Response.json({
             ok: true,
             gatewayConfigured: hasGatewayConfig(gatewayConfig),
             gatewayBaseUrl: gatewayConfig?.baseUrl || null,
-            webhookReady: connectedAccounts.length > 0
-              ? webhookSync.every(item => item.ok)
-              : false,
+            gatewayError,
             accounts,
           });
         } catch (error) {
@@ -236,11 +157,12 @@ export const Route = createFileRoute("/api/gateway")({
             return Response.json({ error: "Payload muito grande" }, { status: 413 });
           }
           let body: {
-            action?: "configure" | "create" | "qr" | "status" | "logout" | "delete";
+            action?: "configure" | "create" | "qr" | "pair" | "status" | "logout" | "delete";
             organizationId?: string;
             instanceName?: string;
             baseUrl?: string;
             apiKey?: string;
+            phone?: string;
           };
           try {
             body = JSON.parse(raw);
@@ -248,11 +170,11 @@ export const Route = createFileRoute("/api/gateway")({
             return Response.json({ error: "JSON inválido" }, { status: 400 });
           }
 
-          if (!body.organizationId || !body.action) {
+          if (!body || typeof body.organizationId !== "string" || typeof body.action !== "string") {
             return Response.json({ error: "organizationId e action são obrigatórios" }, { status: 400 });
           }
 
-          if (!["configure", "create", "qr", "status", "logout", "delete"].includes(body.action)) {
+          if (!["configure", "create", "qr", "pair", "status", "logout", "delete"].includes(body.action)) {
             return Response.json({ error: "Ação inválida" }, { status: 400 });
           }
 
@@ -284,6 +206,10 @@ export const Route = createFileRoute("/api/gateway")({
             return Response.json({ error: "Gateway Evolution ainda não configurado.", code: "GATEWAY_NOT_CONFIGURED" }, { status: 503 });
           }
 
+          const phone = body.phone === undefined ? undefined : normalizePairingPhone(body.phone);
+          if ((body.action === "pair" && !phone) || (body.phone !== undefined && !phone)) {
+            return Response.json({ error: "Informe o telefone com código do país e DDD, por exemplo: 5527999999999." }, { status: 400 });
+          }
           const safeName = body.instanceName.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
           const expectedPrefix = `zapflow-${body.organizationId.slice(0, 8)}-`;
           if (!safeName.startsWith(expectedPrefix)) {
@@ -303,7 +229,9 @@ export const Route = createFileRoute("/api/gateway")({
             case "create": {
               const reservation = await reserveAccount(request, body.organizationId, safeName);
               if (!reservation.is_new) {
-                return Response.json({ error: "Esta sessão já está registrada" }, { status: 409 });
+                result = await getQr(safeName, gatewayConfig, phone || undefined);
+                account = { id: reservation.account_id, session_id: safeName };
+                break;
               }
 
               let remoteCreated = false;
@@ -318,7 +246,14 @@ export const Route = createFileRoute("/api/gateway")({
                     "x-zapflow-organization-id": body.organizationId,
                     "x-zapflow-webhook-secret": webhookSecret,
                   },
-                );
+                  phone || undefined,
+                ).catch(async error => {
+                  if (!(error instanceof Error) || !/Evolution API (400|409)\b/.test(error.message)) throw error;
+                  // Confirm the known instance exists; do not delete an already paired device.
+                  const existing = await getQr(safeName, gatewayConfig, phone || undefined);
+                  await syncInstanceWebhook(request, body.organizationId!, safeName, gatewayConfig);
+                  return existing;
+                });
                 remoteCreated = true;
                 await patchAccount(request, body.organizationId, safeName, {
                   status: "CONNECTING",
@@ -328,7 +263,7 @@ export const Route = createFileRoute("/api/gateway")({
                 });
                 account = { id: reservation.account_id, session_id: safeName };
               } catch (error) {
-                if (!remoteCreated) {
+                if (!remoteCreated && error instanceof Error && /Evolution API (401|403|422)\b/.test(error.message)) {
                   await removeReservedAccount(request, body.organizationId, safeName);
                 } else {
                   console.error("Instância criada na Evolution, mas persistência final falhou", safeName, error);
@@ -337,9 +272,10 @@ export const Route = createFileRoute("/api/gateway")({
               }
               break;
             }
-            case "qr": {
+            case "qr":
+            case "pair": {
               try {
-                result = await getQr(safeName, gatewayConfig);
+                result = await getQr(safeName, gatewayConfig, phone || undefined);
               } catch (error) {
                 if (!evolutionNotFound(error)) throw error;
 
@@ -353,20 +289,25 @@ export const Route = createFileRoute("/api/gateway")({
                     "x-zapflow-organization-id": body.organizationId,
                     "x-zapflow-webhook-secret": webhookSecret,
                   },
+                  phone || undefined,
                 );
               }
 
               await patchAccount(request, body.organizationId, safeName, {
                 status: "CONNECTING",
-                session_status: "WAITING_QR",
-                connection_status: "WAITING_QR",
+                session_status: "CONNECTING",
+                connection_status: "CONNECTING",
                 reconnect_required: false,
                 qr_expires_at: new Date(Date.now() + 60_000).toISOString(),
               });
               break;
             }
             case "status": {
-              result = await getConnectionState(safeName, gatewayConfig);
+              try { result = await getConnectionState(safeName, gatewayConfig); }
+              catch (error) {
+                if (!evolutionNotFound(error)) throw error;
+                result = { instanceName: safeName, status: "DISCONNECTED" };
+              }
               const rawState = String(result.status || "").toUpperCase();
               const normalized =
                 rawState === "OPEN" || rawState === "CONNECTED"
@@ -382,12 +323,8 @@ export const Route = createFileRoute("/api/gateway")({
                 connected_at: normalized === "CONNECTED" ? new Date().toISOString() : null,
               });
               if (normalized === "CONNECTED") {
-                await syncInstanceWebhook(
-                  request,
-                  body.organizationId,
-                  safeName,
-                  gatewayConfig,
-                );
+                await syncInstanceWebhook(request, body.organizationId, safeName, gatewayConfig)
+                  .catch(() => console.error("Webhook pendente de sincronização"));
               }
               break;
             }
@@ -407,7 +344,7 @@ export const Route = createFileRoute("/api/gateway")({
                 result = { instanceName: safeName, status: "already_missing" };
               }
               const { url, headers } = getSupabaseConfig(request);
-              const deleteResponse = await fetch(`${url}/rest/v1/rpc/zapflow_delete_whatsapp_account`, {
+              const deleteResponse = await serverFetch(`${url}/rest/v1/rpc/zapflow_delete_whatsapp_account`, {
                 method: "POST",
                 headers,
                 body: JSON.stringify({
@@ -428,7 +365,11 @@ export const Route = createFileRoute("/api/gateway")({
             }
           }
 
-          return Response.json({ ok: true, result, account });
+          return Response.json({ ok: true, result: result ? {
+            instanceName: result.instanceName, status: result.status,
+            qrcode: result.qrcode || null, pairingCode: result.pairingCode || null,
+            phone: result.phone || null,
+          } : null, account }, { headers: { "Cache-Control": "no-store" } });
         } catch (error) {
           if (error instanceof Response) return error;
           return Response.json({ error: error instanceof Error ? error.message : "Erro inesperado no gateway" }, { status: 500 });
