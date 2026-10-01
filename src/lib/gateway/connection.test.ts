@@ -25,6 +25,10 @@ describe("WhatsApp connection", () => {
     mockFetch(() => Response.json([{ name: "session-1", ownerJid: "5527999999999:12@s.whatsapp.net", connectionStatus: "open", token: "must-not-leak" }]));
     expect(await fetchInstances(config)).toEqual([{ instanceName: "session-1", phone: "5527999999999", status: "open" }]);
   });
+  test("reads phone and state from nested Evolution instance payloads", async () => {
+    mockFetch(() => Response.json([{ instance: { instanceName: "session-2", ownerJid: "5527888888888:3@s.whatsapp.net", state: "open" } }]));
+    expect(await fetchInstances(config)).toEqual([{ instanceName: "session-2", phone: "5527888888888", status: "open" }]);
+  });
   test("validates phone and does not mistake LID or device ID for phone digits", () => {
     expect(normalizePairingPhone("+55 (27) 99999-9999")).toBe("5527999999999");
     expect(normalizePairingPhone("bad5527999999999")).toBeNull();
