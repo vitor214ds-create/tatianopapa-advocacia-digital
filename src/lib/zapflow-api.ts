@@ -193,6 +193,13 @@ export function qrImageSource(value?: string | null) {
   return null;
 }
 
+export function qrCodeText(value?: string | null) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || text.startsWith("data:image/")) return null;
+  return text.length >= 20 ? text : null;
+}
+
 
 export type ChatThread = {
   id: string;
