@@ -10,6 +10,7 @@ export type GatewayInstance = {
   status?: string;
   qrcode?: string | null;
   pairingCode?: string | null;
+  qrCodeText?: string | null;
   phone?: string | null;
   raw?: unknown;
 };
@@ -108,7 +109,11 @@ async function evolutionFetch(
       apikey: apiKey,
       ...(init?.headers || {}),
     },
-  }).catch(() => { throw new Error("Não foi possível alcançar a Evolution API. Verifique se o servidor está online e se o endereço e a porta estão corretos."); });
+  }).catch(() => {
+    throw new Error(
+      "Não foi possível alcançar a Evolution API. Verifique se o servidor está online e se o endereço e a porta estão corretos.",
+    );
+  });
 
   const text = await response.text();
   let data: unknown = null;
@@ -120,7 +125,15 @@ async function evolutionFetch(
 
   if (!response.ok) {
     throw new Error(
-      `Evolution API ${response.status}: ${response.status === 401 || response.status === 403 ? "A chave do gateway foi recusada. Revise a configuração." : response.status === 404 ? "Sessão não encontrada no gateway." : response.status === 429 ? "Muitas solicitações. Aguarde alguns segundos." : "O gateway não conseguiu concluir a operação."}`,
+      `Evolution API ${response.status}: ${
+        response.status === 401 || response.status === 403
+          ? "A chave do gateway foi recusada. Revise a configuração."
+          : response.status === 404
+            ? "Sessão não encontrada no gateway."
+            : response.status === 429
+              ? "Muitas solicitações. Aguarde alguns segundos."
+              : "O gateway não conseguiu concluir a operação."
+      }`,
     );
   }
 
@@ -161,7 +174,7 @@ export async function createInstance(
   return {
     instanceName,
     ...connectionPayload(raw),
-    status: raw?.instance?.status || raw?.status,
+    status: raw?.instance?.status || raw?.instance?.state || raw?.state || raw?.status,
     raw,
   };
 }
@@ -179,7 +192,7 @@ export async function getQr(
   return {
     instanceName,
     ...connectionPayload(raw),
-    status: raw?.instance?.state || raw?.state || raw?.status,
+    status: raw?.instance?.state || raw?.instance?.status || raw?.state || raw?.status,
     raw,
   };
 }
@@ -195,7 +208,7 @@ export async function getConnectionState(
   );
   return {
     instanceName,
-    status: raw?.instance?.state || raw?.state || raw?.status,
+    status: raw?.instance?.state || raw?.instance?.status || raw?.state || raw?.status,
     raw,
   };
 }
@@ -240,7 +253,6 @@ export async function sendText(
   );
 }
 
-
 export async function sendWhatsAppAudio(
   instanceName: string,
   number: string,
@@ -278,7 +290,6 @@ export async function getMediaBase64(
   );
 }
 
-
 export async function setInstanceWebhook(
   instanceName: string,
   webhookUrl: string,
@@ -304,12 +315,54 @@ export async function setInstanceWebhook(
   );
 }
 
+function asString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function imageQr(value: unknown) {
+  const text = asString(value);
+  if (!text) return null;
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(text)) return text;
+  if (text.length > 100 && /^[A-Za-z0-9+/=\r\n]+$/.test(text)) return text.replace(/\s/g, "");
+  return null;
+}
+
+function rawQrCode(value: unknown) {
+  const text = asString(value);
+  if (!text || imageQr(text)) return null;
+  // Evolution/Baileys QR payloads are long strings, commonly beginning with "2@".
+  return text.length >= 20 ? text : null;
+}
+
 export function connectionPayload(raw: any) {
-  const candidates = [raw?.base64, raw?.qrcode?.base64, raw?.qrcode];
+  const data = raw?.data && typeof raw.data === "object" ? raw.data : null;
+  const imageCandidates = [
+    raw?.base64,
+    raw?.qrcode?.base64,
+    typeof raw?.qrcode === "string" ? raw.qrcode : null,
+    data?.base64,
+    data?.Qrcode,
+    data?.qrcode?.base64,
+    typeof data?.qrcode === "string" ? data.qrcode : null,
+  ];
+  const codeCandidates = [
+    raw?.code,
+    raw?.qrcode?.code,
+    data?.Code,
+    data?.code,
+    data?.qrcode?.code,
+  ];
+
+  const pairingCode =
+    asString(raw?.pairingCode) ||
+    asString(raw?.qrcode?.pairingCode) ||
+    asString(data?.pairingCode) ||
+    asString(data?.qrcode?.pairingCode);
+
   return {
-    qrcode: candidates.find(value => typeof value === "string" && value.length > 100) || null,
-    pairingCode: typeof (raw?.pairingCode ?? raw?.qrcode?.pairingCode) === "string"
-      ? (raw.pairingCode ?? raw.qrcode.pairingCode) : null,
+    qrcode: imageCandidates.map(imageQr).find(Boolean) || null,
+    pairingCode,
+    qrCodeText: codeCandidates.map(rawQrCode).find(Boolean) || null,
   };
 }
 
@@ -321,19 +374,40 @@ export function normalizePairingPhone(value: unknown) {
 
 export function instancePhone(value: unknown) {
   if (typeof value !== "string") return null;
-  const digits = value.split("@")[0].split(":")[0].replace(/\D/g, "");
+  const normalized = value.trim();
+  const at = normalized.indexOf("@");
+  if (at >= 0) {
+    const domain = normalized.slice(at + 1).toLowerCase();
+    if (domain !== "s.whatsapp.net" && domain !== "c.us") return null;
+  }
+  const digits = normalized.split("@")[0].split(":")[0].replace(/\D/g, "");
   return /^[1-9]\d{7,14}$/.test(digits) ? digits : null;
 }
 
 export async function fetchInstances(config?: EvolutionConfig | null) {
   const raw = await evolutionFetch("/instance/fetchInstances", undefined, config);
   if (!Array.isArray(raw)) throw new Error("O gateway retornou uma lista de sessões inválida.");
+
   return raw.map(item => {
-    const instance = item.instance || item;
+    const instance = item?.instance || item;
+    const ownerCandidate =
+      instance?.ownerJid ||
+      instance?.owner?.jid ||
+      instance?.owner ||
+      instance?.number ||
+      item?.ownerJid ||
+      item?.number;
+
     return {
-      instanceName: instance.instanceName || instance.name,
-      status: instance.connectionStatus || instance.state || instance.status,
-      phone: instancePhone(instance.ownerJid || instance.owner || instance.number),
+      instanceName: instance?.instanceName || instance?.name,
+      status:
+        instance?.connectionStatus ||
+        instance?.state ||
+        instance?.status ||
+        item?.connectionStatus ||
+        item?.state ||
+        item?.status,
+      phone: instancePhone(ownerCandidate),
     } as GatewayInstance;
   });
 }
