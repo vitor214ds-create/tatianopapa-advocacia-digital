@@ -121,15 +121,34 @@ export const Route = createFileRoute("/api/gateway")({
           if (gatewayConfig && accounts.length) {
             try {
               const remote = await fetchInstances(gatewayConfig);
+              const remoteByName = new Map(remote.filter(item => item.instanceName).map(item => [item.instanceName, item]));
               await Promise.all(accounts.map(async account => {
-                const instance = remote.find(item => item.instanceName === account.session_id);
-                if (!instance) return;
+                const instance = remoteByName.get(account.session_id);
+                const now = new Date().toISOString();
+                if (!instance) {
+                  const patch = {
+                    connection_status: "DISCONNECTED",
+                    session_status: "DISCONNECTED",
+                    reconnect_required: true,
+                    last_seen_at: now,
+                  };
+                  await patchAccount(request, organizationId, account.session_id, patch);
+                  Object.assign(account, patch);
+                  return;
+                }
                 const state = String(instance.status || "").toUpperCase();
-                const normalized = ["OPEN", "CONNECTED"].includes(state) ? "CONNECTED" : state === "CONNECTING" ? "CONNECTING" : "DISCONNECTED";
+                const normalized = ["OPEN", "CONNECTED"].includes(state)
+                  ? "CONNECTED"
+                  : ["CONNECTING", "PAIRING", "WAITING_QR"].includes(state)
+                    ? "CONNECTING"
+                    : "DISCONNECTED";
                 const patch = {
-                  connection_status: normalized, session_status: normalized,
+                  connection_status: normalized,
+                  session_status: normalized,
                   ...(instance.phone ? { phone: instance.phone } : {}),
-                  reconnect_required: normalized === "DISCONNECTED", last_seen_at: new Date().toISOString(),
+                  reconnect_required: normalized === "DISCONNECTED",
+                  last_seen_at: now,
+                  ...(normalized === "CONNECTED" ? { connected_at: account.connected_at || now } : {}),
                 };
                 await patchAccount(request, organizationId, account.session_id, patch);
                 Object.assign(account, patch);
