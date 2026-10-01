@@ -10,6 +10,8 @@ describe("WhatsApp connection", () => {
   test("accepts delayed response without treating an object as an image", () => {
     expect(connectionPayload({ qrcode: { count: 0 } }).qrcode).toBeNull();
     expect(connectionPayload({ qrcode: { base64: "a".repeat(120), pairingCode: "12345678" } }).pairingCode).toBe("12345678");
+    expect(connectionPayload({ code: "2@" + "x".repeat(80) }).qrCodeText).toBe("2@" + "x".repeat(80));
+    expect(connectionPayload({ data: { Code: "2@" + "y".repeat(80) } }).qrCodeText).toBe("2@" + "y".repeat(80));
   });
   test("passes phone on initial creation and enables authenticated webhook", async () => {
     mockFetch((url, init) => { const body = JSON.parse(String(init?.body)); expect(body.number).toBe("5527999999999"); expect(body.webhook.enabled).toBe(true); expect(body.webhook.headers["x-zapflow-webhook-secret"]).toBe("test-secret"); return Response.json({ qrcode: { pairingCode: "ABCD1234" } }); });
@@ -28,6 +30,7 @@ describe("WhatsApp connection", () => {
     expect(normalizePairingPhone("bad5527999999999")).toBeNull();
     expect(normalizePairingPhone("123")).toBeNull();
     expect(instancePhone("5527999999999:12@s.whatsapp.net")).toBe("5527999999999");
+    expect(instancePhone("123456789012345@lid")).toBeNull();
   });
   test("shows human session labels", () => { expect(accountLabel({ session_id: "zapflow-12345678-01", internal_name: "zapflow-12345678-01" })).toBe("WhatsApp 1"); });
   test("does not expose upstream credentials in errors", async () => {
