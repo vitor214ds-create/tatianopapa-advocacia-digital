@@ -2,10 +2,10 @@ import { accountLabel } from "../lib/gateway/accounts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, MessageCircle, Phone, QrCode, RefreshCw, Settings2, Smartphone, Trash2, Unplug } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
-import { configureGateway, gatewayAction, listWhatsAppAccounts, qrImageSource, type WhatsAppAccount } from "../lib/zapflow-api";
+import { configureGateway, gatewayAction, listWhatsAppAccounts, qrCodeText, qrImageSource, type WhatsAppAccount } from "../lib/zapflow-api";
 
 type Props = { organizationId: string; onConnectedCountChange?: (count: number) => void; onOpenChat?: (sessionId: string) => void };
-type Connection = { instanceName: string; label: string; mode: "qr" | "phone"; phone: string; qr: string | null; code: string | null; loading: boolean; error: string | null };
+type Connection = { instanceName: string; label: string; mode: "qr" | "phone"; phone: string; qr: string | null; qrText: string | null; code: string | null; loading: boolean; error: string | null };
 const MAX_SESSIONS = 10;
 function connected(account: WhatsAppAccount) { return ["OPEN", "CONNECTED"].includes(String(account.connection_status || account.session_status || account.status).toUpperCase()); }
 export function WhatsAppSessionManager({ organizationId, onConnectedCountChange, onOpenChat }: Props) {
@@ -49,7 +49,7 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
   function close() { generation.current++; if (timer.current) clearTimeout(timer.current); setModal(null); setBusy(false); }
   function open(instanceName: string, label: string, mode: "qr" | "phone") {
     close();
-    const next: Connection = { instanceName, label, mode, phone: "", qr: null, code: null, loading: false, error: null };
+    const next: Connection = { instanceName, label, mode, phone: "", qr: null, qrText: null, code: null, loading: false, error: null };
     setModal(next);
     if (mode === "qr") void connect(next);
   }
@@ -62,16 +62,17 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
     if (timer.current) clearTimeout(timer.current);
     const requestId = ++generation.current;
     const current = () => alive.current && requestId === generation.current;
-    setModal({ ...connection, qr: null, code: null, loading: true, error: null }); setBusy(true);
+    setModal({ ...connection, qr: null, qrText: null, code: null, loading: true, error: null }); setBusy(true);
     let lastQrAt = 0;
     const startedAt = Date.now();
     let transientFailures = 0;
     const apply = (response: any) => {
       if (!current()) return;
       const qr = qrImageSource(response.result?.qrcode);
+      const rawQr = qrCodeText(response.result?.qrCodeText);
       const code = typeof response.result?.pairingCode === "string" ? response.result.pairingCode : null;
-      if (connection.mode === "phone" ? code : qr) lastQrAt = Date.now();
-      setModal(value => value ? { ...value, qr, code, loading: connection.mode === "phone" ? !code : !qr, error: null } : null);
+      if (connection.mode === "phone" ? code : (qr || rawQr)) lastQrAt = Date.now();
+      setModal(value => value ? { ...value, qr, qrText: rawQr, code, loading: connection.mode === "phone" ? !code : !(qr || rawQr), error: null } : null);
     };
     const poll = async () => {
       if (!current()) return;
@@ -80,7 +81,7 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
         if (!current()) return;
         if (["OPEN", "CONNECTED"].includes(String(status.result?.status).toUpperCase())) { close(); await refresh(); return; }
         if (Date.now() - startedAt > 180000) {
-          setModal(value => value ? { ...value, qr: null, code: null, loading: false, error: "O tempo de conexão terminou. Gere um novo código para tentar novamente." } : null); return;
+          setModal(value => value ? { ...value, qr: null, qrText: null, code: null, loading: false, error: "O tempo de conexão terminou. Gere um novo código para tentar novamente." } : null); return;
         }
         // Retrieve delayed QR and keep it fresh. Pairing codes are not regenerated once displayed.
         if (!lastQrAt || (connection.mode === "qr" && Date.now() - lastQrAt >= 25000)) {
@@ -144,9 +145,9 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
     <Dialog open={!!modal} onOpenChange={value => { if (!value) close(); }}><DialogContent className="max-w-md rounded-2xl bg-white p-6"><DialogTitle>Conectar {modal?.label}</DialogTitle><DialogDescription>{modal?.mode === "phone" ? "Informe o número com código do país e confirme o código no próprio WhatsApp. Não é um código enviado por SMS." : "No celular, abra WhatsApp → Aparelhos conectados → Conectar um aparelho e escaneie o QR."}</DialogDescription>
       {modal && <><div className="flex gap-2"><button className={`btn ${modal.mode === "qr" ? "btn-primary" : "btn-soft"}`} onClick={() => open(modal.instanceName, modal.label, "qr")}><QrCode size={16}/>QR Code</button><button className={`btn ${modal.mode === "phone" ? "btn-primary" : "btn-soft"}`} onClick={() => open(modal.instanceName, modal.label, "phone")}><Phone size={16}/>Telefone</button></div>
       {modal.mode === "phone" && <label className="grid gap-2 text-sm">Telefone com país e DDD<input type="tel" placeholder="55 27 99999-9999" className="rounded-xl border p-3" disabled={modal.loading || !!modal.code} value={modal.phone} onChange={e => setModal({ ...modal, phone: e.target.value })}/></label>}
-      <div className="grid min-h-48 place-items-center rounded-2xl bg-[#f3f8f4] p-5" aria-live="polite">{modal.loading ? <div className="text-center"><Loader2 className="mx-auto animate-spin text-[#269451]"/><p className="mt-3 text-sm">Preparando conexão. Aguarde...</p></div> : modal.mode === "phone" && modal.code ? <div className="text-center"><strong className="font-mono text-3xl tracking-widest text-[#247747]">{modal.code}</strong><p className="mt-4 text-sm">No WhatsApp, toque em Conectar um aparelho → Conectar com número de telefone e digite este código.</p></div> : modal.mode === "qr" && modal.qr ? <img src={modal.qr} alt="QR Code de conexão do WhatsApp" className="w-64 max-w-full bg-white p-2"/> : <Smartphone size={40} className="text-[#89a591]"/>}</div>
+      <div className="grid min-h-48 place-items-center rounded-2xl bg-[#f3f8f4] p-5" aria-live="polite">{modal.loading ? <div className="text-center"><Loader2 className="mx-auto animate-spin text-[#269451]"/><p className="mt-3 text-sm">Preparando conexão. Aguarde...</p></div> : modal.mode === "phone" && modal.code ? <div className="text-center"><strong className="font-mono text-3xl tracking-widest text-[#247747]">{modal.code}</strong><p className="mt-4 text-sm">No WhatsApp, toque em Conectar um aparelho → Conectar com número de telefone e digite este código.</p></div> : modal.mode === "qr" && modal.qr ? <img src={modal.qr} alt="QR Code de conexão do WhatsApp" className="w-64 max-w-full bg-white p-2"/> : modal.mode === "qr" && modal.qrText ? <div className="max-w-full text-center"><QrCode size={44} className="mx-auto text-[#247747]"/><p className="mt-3 text-sm font-semibold text-[#355641]">QR recebido do servidor, mas em formato de texto.</p><p className="mt-1 text-xs text-[#718077]">Atualize a Evolution para uma versão que forneça base64 do QR ou use “Pelo telefone” para conectar agora.</p></div> : <Smartphone size={40} className="text-[#89a591]"/>}</div>
       {modal.error && <p role="alert" className="text-sm text-amber-800">{modal.error}</p>}
-      <p className="text-xs text-[#718077]">A confirmação aparece automaticamente. O QR é atualizado enquanto esta janela estiver aberta.</p><button className="btn btn-primary" disabled={modal.loading || busy} onClick={() => void connect(modal)}><RefreshCw size={16}/>{modal.code || modal.qr ? "Gerar novo código" : "Gerar código"}</button></>}
+      <p className="text-xs text-[#718077]">A confirmação aparece automaticamente. O QR é atualizado enquanto esta janela estiver aberta.</p><button className="btn btn-primary" disabled={modal.loading || busy} onClick={() => void connect(modal)}><RefreshCw size={16}/>{modal.code || modal.qr || modal.qrText ? "Gerar novo código" : "Gerar código"}</button></>}
     </DialogContent></Dialog>
   </div>;
 }
