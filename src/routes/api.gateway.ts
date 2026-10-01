@@ -368,7 +368,7 @@ export const Route = createFileRoute("/api/gateway")({
           return Response.json({ ok: true, result: result ? {
             instanceName: result.instanceName, status: result.status,
             qrcode: result.qrcode || null, pairingCode: result.pairingCode || null,
-            phone: result.phone || null,
+            qrCodeText: result.qrCodeText || null, phone: result.phone || null,
           } : null, account }, { headers: { "Cache-Control": "no-store" } });
         } catch (error) {
           if (error instanceof Response) return error;
