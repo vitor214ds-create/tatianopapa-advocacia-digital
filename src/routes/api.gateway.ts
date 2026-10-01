@@ -225,6 +225,45 @@ export const Route = createFileRoute("/api/gateway")({
           let result;
           let account: unknown = null;
 
+          // A disconnected local slot can outlive a stale/missing provider instance.
+          // Recreate it on phone pairing so the provider gets the requested number on
+          // the instance creation path as well as on /instance/connect.
+          if (body.action === "pair" && ownedAccount) {
+            let remoteExists = true;
+            try {
+              await getConnectionState(safeName, gatewayConfig);
+            } catch (error) {
+              if (!evolutionNotFound(error)) throw error;
+              remoteExists = false;
+            }
+            if (!remoteExists) {
+              const origin = new URL(request.url).origin;
+              const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
+              result = await createInstance(
+                safeName,
+                `${origin}/api/gateway-webhook`,
+                gatewayConfig,
+                {
+                  "x-zapflow-organization-id": body.organizationId,
+                  "x-zapflow-webhook-secret": webhookSecret,
+                },
+                phone || undefined,
+              );
+              await patchAccount(request, body.organizationId, safeName, {
+                status: "CONNECTING",
+                session_status: "CONNECTING",
+                connection_status: "CONNECTING",
+                reconnect_required: false,
+                qr_expires_at: new Date(Date.now() + 60_000).toISOString(),
+              });
+              return Response.json({ ok: true, result: {
+                instanceName: result.instanceName, status: result.status,
+                qrcode: result.qrcode || null, pairingCode: result.pairingCode || null,
+                qrCodeText: result.qrCodeText || null, phone: result.phone || null,
+              }, account: { id: ownedAccount.id, session_id: safeName } }, { headers: { "Cache-Control": "no-store" } });
+            }
+          }
+
           switch (body.action) {
             case "create": {
               const reservation = await reserveAccount(request, body.organizationId, safeName);
