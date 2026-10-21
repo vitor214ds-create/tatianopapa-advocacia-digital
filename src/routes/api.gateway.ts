@@ -156,6 +156,15 @@ export const Route = createFileRoute("/api/gateway")({
             } catch (error) { gatewayError = error instanceof Error ? error.message : "Gateway indisponível"; }
           }
 
+          if (gatewayError) {
+            for (const account of accounts) {
+              if (["CONNECTED", "OPEN"].includes(String(account.connection_status || "").toUpperCase())) {
+                account.connection_status = "UNKNOWN";
+                account.session_status = "UNKNOWN";
+              }
+            }
+          }
+
           return Response.json({
             ok: true,
             gatewayConfigured: hasGatewayConfig(gatewayConfig),
