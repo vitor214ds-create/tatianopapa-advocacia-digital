@@ -180,7 +180,7 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
       <p className="text-xs text-[#718077]">A chave é obtida na configuração do servidor Evolution e fica armazenada de forma protegida. Não é sua senha de administrador.</p>
       <button className="btn btn-primary justify-self-start" disabled={busy || !validGatewayUrl || configKey.trim().length < 8}
         onClick={() => void save()}>{busy ? "Salvando..." : "Salvar configuração"}</button>
-    </section>
+    </section>}
     {loading ? <div role="status" className="p-8 text-center">Carregando números...</div> : <section className="grid grid-cols-2 gap-4 max-[800px]:grid-cols-1">{slots.map(({ account, id, label }) => {
       const online = account ? connected(account) : false;
       return <article key={id} className={`panel p-5 ${online ? "border-[#a9ddba]" : ""}`}><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className={`grid h-12 w-12 place-items-center rounded-2xl ${online ? "bg-[#dff6e7] text-[#238847]" : "bg-[#f1f4f2] text-[#87978c]"}`}><Smartphone size={23}/></div><div><h2 className="font-semibold text-[#26392d]">{label}</h2><p className="mt-1 text-sm text-[#6b7b70]">{account?.phone ? `+${account.phone}` : online ? "Sincronizando telefone..." : "Nenhum número conectado"}</p></div></div><span className={`status ${online ? "status-success" : "status-neutral"}`}>{online ? "Conectado" : account ? "Desconectado" : "Disponível"}</span></div>
