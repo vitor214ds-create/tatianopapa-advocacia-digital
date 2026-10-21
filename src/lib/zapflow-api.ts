@@ -141,6 +141,7 @@ export async function createCampaign(input: {
   name: string;
   message: string;
   recipients: Array<{ id?: string; name?: string; phone: string; consent: boolean; suppressed?: boolean }>;
+  sessionIds: string[];
   scheduledAt?: string;
   scheduledEndAt?: string;
 }) {

@@ -102,6 +102,7 @@ export const Route = createFileRoute("/api/campaigns")({
             name?: string;
             message?: string;
             recipients?: QueueRecipient[];
+            sessionIds?: string[];
             scheduledAt?: string;
             scheduledEndAt?: string;
           };
@@ -135,6 +136,13 @@ export const Route = createFileRoute("/api/campaigns")({
               { error: "Cada campanha aceita no máximo 5.000 destinatários por criação" },
               { status: 400 },
             );
+          }
+
+          if (!Array.isArray(body.sessionIds) || body.sessionIds.length === 0 ||
+              body.sessionIds.length > 10 ||
+              body.sessionIds.some(id => typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id)) ||
+              new Set(body.sessionIds).size !== body.sessionIds.length) {
+            return Response.json({ error: "Selecione de 1 a 10 sessões válidas" }, { status: 400 });
           }
 
           if (body.scheduledAt !== undefined) {
@@ -191,6 +199,7 @@ export const Route = createFileRoute("/api/campaigns")({
             name: body.name.trim(),
             message: body.message.trim(),
             recipients: body.recipients,
+            selectedSessionIds: body.sessionIds,
             createdBy: user.userId,
             scheduledAt: body.scheduledAt,
             scheduledEndAt: body.scheduledEndAt,

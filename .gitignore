@@ -30,3 +30,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Never commit local credentials
+.env
+.env.*
+!.env.example
+evolution/.env
+evolution/.env.*
+!evolution/.env.example
