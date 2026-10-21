@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { connectionPayload, createInstance, getQr, fetchInstances, normalizePairingPhone, instancePhone } from "./evolution";
+import { connectionPayload, createInstance, getQr, fetchInstances, normalizePairingPhone, instancePhone, normalizeEvolutionBaseUrl } from "./evolution";
 import { messagePayloads } from "./webhook-payload";
 import { accountLabel } from "./accounts";
 const originalFetch = globalThis.fetch;
@@ -28,6 +28,11 @@ describe("WhatsApp connection", () => {
   test("reads phone and state from nested Evolution instance payloads", async () => {
     mockFetch(() => Response.json([{ instance: { instanceName: "session-2", ownerJid: "5527888888888:3@s.whatsapp.net", state: "open" } }]));
     expect(await fetchInstances(config)).toEqual([{ instanceName: "session-2", phone: "5527888888888", status: "open" }]);
+  });
+  test("rejects a login email as an Evolution server URL", () => {
+    expect(normalizeEvolutionBaseUrl("admin@zapflow.app")).toBeNull();
+    expect(normalizeEvolutionBaseUrl("https://admin@zapflow.app")).toBeNull();
+    expect(normalizeEvolutionBaseUrl("https://evolution.example.com")).toBe("https://evolution.example.com");
   });
   test("validates phone and does not mistake LID or device ID for phone digits", () => {
     expect(normalizePairingPhone("+55 (27) 99999-9999")).toBe("5527999999999");
