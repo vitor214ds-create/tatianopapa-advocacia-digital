@@ -80,7 +80,7 @@ async function ensureInboundWebhook(request: Request, organizationId: string) {
 
   const config = await gatewayConfig(request, organizationId);
   const secret = await webhookSecret(request, organizationId);
-  const origin = new URL(request.url).origin;
+  const origin = runtimeEnv("ZAPFLOW_LOCAL_MODE") === "true" ? "http://zapflow:3000" : new URL(request.url).origin;
 
   const results = await Promise.all(
     sessions.map(async sessionId => {
