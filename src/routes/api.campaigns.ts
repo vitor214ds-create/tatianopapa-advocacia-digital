@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { authorizeOrganization, requireAdmin } from "../lib/server-auth";
+import { authorizeOrganization, requireCampaignOperator } from "../lib/server-auth";
 import { createQueuedCampaign, type QueueRecipient } from "../lib/campaign-queue-server";
 import { supabasePublicConfig } from "../lib/runtime-env";
 
@@ -185,7 +185,7 @@ export const Route = createFileRoute("/api/campaigns")({
           }
 
           const user = await authorizeOrganization(request, body.organizationId);
-          requireAdmin(user);
+          requireCampaignOperator(user);
           const queued = await createQueuedCampaign(request, {
             organizationId: body.organizationId,
             name: body.name.trim(),

@@ -21,6 +21,12 @@ export function normalizeEvolutionBaseUrl(value?: string | null) {
   let raw = String(value || "").trim().replace(/\/$/, "");
   if (!raw) return null;
 
+  // Docker-only local development: allow exactly one private service endpoint.
+  // Never accept arbitrary LAN/localhost URLs, and do not enable this in production.
+  if (runtimeEnv("ZAPFLOW_LOCAL_MODE") === "true" && raw === "http://evolution-api:8080") {
+    return raw;
+  }
+
   const ownPrivateDomain = String(runtimeEnv("RAILWAY_PRIVATE_DOMAIN") || "")
     .trim()
     .toLowerCase();

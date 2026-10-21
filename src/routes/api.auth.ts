@@ -66,6 +66,9 @@ function parseCookies(request: Request) {
 }
 
 function isProduction() {
+  // Only for the self-hosted localhost Docker profile, where HTTPS is not available.
+  // The installer binds port 3000 to 127.0.0.1; do not enable this flag publicly.
+  if (runtimeEnv("ZAPFLOW_LOCAL_MODE") === "true") return false;
   return runtimeEnv("NODE_ENV") === "production" || runtimeEnv("MODE") === "production";
 }
 

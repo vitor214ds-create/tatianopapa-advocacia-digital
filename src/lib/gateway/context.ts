@@ -36,6 +36,9 @@ function environmentGatewayConfig(): EvolutionConfig | null {
 
 
 export async function getOrganizationGatewayConfig(request: Request, organizationId: string): Promise<EvolutionConfig | null> {
+  // Local Docker deployments use the explicitly configured internal gateway,
+  // ignoring stale Railway URLs stored for the same organization.
+  if (runtimeEnv("ZAPFLOW_LOCAL_MODE") === "true") return environmentGatewayConfig();
   const { url, headers } = getSupabaseConfig(request);
   const response = await serverFetch(`${url}/rest/v1/rpc/get_evolution_gateway_config`, {
     method: "POST",
