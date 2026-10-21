@@ -19,7 +19,7 @@ import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
 
 async function saveOrganizationGatewayConfig(request: Request, organizationId: string, baseUrl: string, apiKey: string) {
   const normalizedUrl = normalizeEvolutionBaseUrl(baseUrl);
-  if (!normalizedUrl) throw new Error("URL da Evolution inválida");
+  if (!normalizedUrl) throw new Error("Endereço inválido: informe a URL HTTP(S) do servidor Evolution API, não seu e-mail ou login.");
 
   const { url, headers } = getSupabaseConfig(request);
   const response = await serverFetch(`${url}/rest/v1/rpc/set_evolution_gateway_config`, {
