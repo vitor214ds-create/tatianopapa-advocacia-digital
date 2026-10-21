@@ -291,7 +291,7 @@ function CampaignsPage({
   accounts: WhatsAppAccount[];
   organizationId: string;
 }) {
-  const active = accounts.filter(accountConnected);
+  const connectedAccounts = accounts.filter(accountConnected);
   const [previewTotal, setPreviewTotal] = useState(103);
   const [creating, setCreating] = useState(true);
   const [name, setName] = useState("");
@@ -299,6 +299,7 @@ function CampaignsPage({
   const [recipientText, setRecipientText] = useState("");
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
+  const active = connectedAccounts.filter(account => selectedSessions.includes(account.id));
   const [deliveryMode, setDeliveryMode] = useState<"now" | "scheduled">("now");
   const [scheduledLocal, setScheduledLocal] = useState("");
   const [scheduledEndLocal, setScheduledEndLocal] = useState("");
@@ -412,7 +413,7 @@ function CampaignsPage({
     setSuccess(null);
 
     if (!active.length) {
-      setError("Conecte pelo menos um número antes de criar uma campanha.");
+      setError("Selecione pelo menos um WhatsApp conectado antes de criar uma campanha.");
       return;
     }
     if (name.trim().length < 2) {
@@ -491,6 +492,7 @@ function CampaignsPage({
         name: name.trim(),
         message: message.trim(),
         recipients,
+        sessionIds: active.map(account => account.id),
         scheduledAt,
         scheduledEndAt,
       });
@@ -507,6 +509,7 @@ function CampaignsPage({
       setMessage("");
       setRecipientText("");
       setConsentConfirmed(false);
+      setSelectedSessions([]);
       setDeliveryMode("now");
       setScheduledLocal("");
       setScheduledEndLocal("");
@@ -665,6 +668,21 @@ function CampaignsPage({
             {inputLines} contato(s) reconhecido(s). Cabeçalhos como nome, telefone, celular, WhatsApp e phone são detectados automaticamente.
           </span>
         </div>
+
+        <fieldset className="rounded-xl border border-[#dfe7e1] p-4">
+          <legend className="px-1 text-sm font-semibold text-[#304237]">WhatsApps participantes</legend>
+          <p className="mb-3 text-xs text-[#718077]">Escolha explicitamente os números autorizados para esta campanha.</p>
+          {connectedAccounts.length ? connectedAccounts.map(account => (
+            <label key={account.id} className="flex items-center gap-2 py-2 text-sm">
+              <input type="checkbox" checked={selectedSessions.includes(account.id)}
+                onChange={event => setSelectedSessions(current => event.target.checked
+                  ? [...current, account.id]
+                  : current.filter(id => id !== account.id))} />
+              <span>{account.internal_name || account.phone || account.session_id}</span>
+            </label>
+          )) : <p className="text-sm text-amber-700">Conecte um WhatsApp para habilitar campanhas.</p>}
+          <p className="mt-2 text-xs text-[#718077]">{active.length} de {connectedAccounts.length} número(s) selecionado(s)</p>
+        </fieldset>
 
         <label className="flex items-start gap-3 rounded-xl border border-[#dfe7e1] bg-[#f8faf8] p-3 text-sm text-[#526158]">
           <input
