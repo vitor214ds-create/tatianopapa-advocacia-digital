@@ -1,6 +1,6 @@
 import { chromium } from "playwright";
 
-const BASE = "https://tatianopapa-advocacia-digital-production-b13f.up.railway.app";
+const BASE = process.env.ZAPFLOW_PRODUCTION_URL; if (!BASE) throw new Error("ZAPFLOW_PRODUCTION_URL is required");
 const expected = (process.env.GITHUB_SHA || "").slice(0, 12);
 const org = "smoke-org-12345678";
 
