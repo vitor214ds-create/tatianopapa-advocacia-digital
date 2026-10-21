@@ -47,3 +47,11 @@ export function requireAdmin(user: AuthorizedUser) {
     throw new Response("Ação restrita a Owner/Admin", { status: 403 });
   }
 }
+
+/** Team operators may create campaigns for their own organization, but cannot manage gateway settings. */
+export function requireCampaignOperator(user: AuthorizedUser) {
+  const role = String(user.role || "").toLowerCase();
+  if (!["owner", "admin", "staff", "member"].includes(role)) {
+    throw new Response("Ação restrita a integrantes autorizados da equipe", { status: 403 });
+  }
+}
