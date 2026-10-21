@@ -17,6 +17,10 @@ import {
 } from "../lib/gateway/evolution";
 import { runtimeEnv, supabasePublicConfig } from "../lib/runtime-env";
 
+function webhookOrigin(request: Request) {
+  return runtimeEnv("ZAPFLOW_LOCAL_MODE") === "true" ? "http://zapflow:3000" : new URL(request.url).origin;
+}
+
 async function saveOrganizationGatewayConfig(request: Request, organizationId: string, baseUrl: string, apiKey: string) {
   const normalizedUrl = normalizeEvolutionBaseUrl(baseUrl);
   if (!normalizedUrl) throw new Error("URL da Evolution inválida");
@@ -89,7 +93,7 @@ async function syncInstanceWebhook(
   gatewayConfig: EvolutionConfig | null,
 ) {
   if (!hasGatewayConfig(gatewayConfig)) return false;
-  const origin = new URL(request.url).origin;
+  const origin = webhookOrigin(request);
   const webhookSecret = await getOrganizationWebhookSecret(request, organizationId);
   await setInstanceWebhook(
     instanceName,
@@ -256,7 +260,7 @@ export const Route = createFileRoute("/api/gateway")({
               remoteExists = false;
             }
             if (!remoteExists) {
-              const origin = new URL(request.url).origin;
+              const origin = webhookOrigin(request);
               const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
               result = await createInstance(
                 safeName,
@@ -294,7 +298,7 @@ export const Route = createFileRoute("/api/gateway")({
 
               let remoteCreated = false;
               try {
-                const origin = new URL(request.url).origin;
+                const origin = webhookOrigin(request);
                 const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
                 result = await createInstance(
                   safeName,
@@ -337,7 +341,7 @@ export const Route = createFileRoute("/api/gateway")({
               } catch (error) {
                 if (!evolutionNotFound(error)) throw error;
 
-                const origin = new URL(request.url).origin;
+                const origin = webhookOrigin(request);
                 const webhookSecret = await getOrganizationWebhookSecret(request, body.organizationId);
                 result = await createInstance(
                   safeName,
