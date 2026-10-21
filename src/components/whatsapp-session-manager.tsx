@@ -1,4 +1,5 @@
 import { accountLabel } from "../lib/gateway/accounts";
+import { normalizeEvolutionBaseUrl } from "../lib/gateway/evolution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, MessageCircle, Phone, QrCode, RefreshCw, Settings2, Smartphone, Trash2, Unplug } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
@@ -23,6 +24,9 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
   const alive = useRef(true);
   const refreshFlight = useRef<Promise<void> | null>(null);
   const count = accounts.filter(connected).length;
+  const trimmedGatewayUrl = configUrl.trim();
+  const validGatewayUrl = /^https?:\/\//i.test(trimmedGatewayUrl) && Boolean(normalizeEvolutionBaseUrl(trimmedGatewayUrl));
+  const invalidGatewayUrl = trimmedGatewayUrl.length > 0 && !validGatewayUrl;
   const connectedCallback = useRef(onConnectedCountChange);
   connectedCallback.current = onConnectedCountChange;
   useEffect(() => { connectedCallback.current?.(count); }, [count]);
@@ -116,10 +120,27 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
     finally { setBusy(false); }
   }
   async function save() {
+    if (!validGatewayUrl) {
+      setError("Informe uma URL válida do servidor Evolution API (https://...), não o e-mail de login.");
+      return;
+    }
+    if (configKey.trim().length < 8) {
+      setError("Informe a chave de API configurada no servidor Evolution. Ela não é a senha do ZapFlow.");
+      return;
+    }
     setBusy(true);
-    try { await configureGateway(organizationId, configUrl.trim(), configKey.trim()); setConfigKey(""); setEditing(false); await refresh(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Não foi possível salvar."); }
-    finally { setBusy(false); }
+    setError(null);
+    try {
+      const result = await configureGateway(organizationId, trimmedGatewayUrl, configKey.trim());
+      if (!result.gatewayConfigured) throw new Error("O servidor não confirmou a configuração do gateway.");
+      setConfigKey("");
+      setEditing(false);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar.");
+    } finally {
+      setBusy(false);
+    }
   }
   const slots = useMemo(() => {
     const result = accounts.map((account, index) => ({ account: account as WhatsAppAccount | null, id: account.session_id, label: accountLabel(account, `WhatsApp ${index + 1}`) }));
@@ -135,7 +156,31 @@ export function WhatsAppSessionManager({ organizationId, onConnectedCountChange,
     <div className="grid grid-cols-3 gap-3 max-[600px]:grid-cols-1">{[["Conectados", count], ["Cadastrados", accounts.length], ["Disponíveis", Math.max(0, MAX_SESSIONS - accounts.length)]].map(([label, value]) => <div key={label} className="panel p-5"><span className="text-sm text-[#718077]">{label}</span><strong className="mt-2 block text-3xl text-[#247747]">{value}</strong></div>)}</div>
     {error && <div role="alert" className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><AlertTriangle size={20}/>{error}</div>}
     <div className="flex items-center justify-between rounded-xl bg-[#eef6f0] p-4 text-sm text-[#355641]"><span>{configured ? "Serviço de conexão configurado" : "Configure o serviço de conexão para adicionar números"}</span><button className="btn btn-soft" onClick={() => setEditing(!editing)}><Settings2 size={16}/>Configuração</button></div>
-    {(!configured || editing) && !loading && <section className="panel grid gap-3 p-5"><h2>Configuração da Evolution API</h2><label className="grid gap-1 text-sm">Endereço do servidor<input className="rounded-xl border p-3" value={configUrl} onChange={e => setConfigUrl(e.target.value)} placeholder="https://evolution.seudominio.com"/></label><label className="grid gap-1 text-sm">Chave de acesso<input type="password" autoComplete="off" className="rounded-xl border p-3" value={configKey} onChange={e => setConfigKey(e.target.value)}/></label><button className="btn btn-primary justify-self-start" disabled={busy || !configUrl || configKey.length < 8} onClick={() => void save()}>Salvar configuração</button></section>}
+    {(!configured || editing) && !loading && <section className="panel grid gap-3 p-5">
+      <h2>Configuração da Evolution API</h2>
+      <p className="text-sm text-[#607568]">Informe os dados do <strong>servidor Evolution API</strong>. Não use o e-mail nem a senha de login do ZapFlow. É necessário ter uma Evolution API instalada e acessível.</p>
+      <label className="grid gap-1 text-sm" htmlFor="evolution-gateway-url">Endereço do servidor (URL)
+        <input id="evolution-gateway-url" name="evolution_gateway_endpoint_url" type="url" inputMode="url"
+          autoComplete="off" autoCapitalize="none" spellCheck={false} required
+          aria-invalid={invalidGatewayUrl}
+          aria-describedby="evolution-url-help"
+          className={`rounded-xl border p-3 ${invalidGatewayUrl ? "border-red-400" : ""}`}
+          value={configUrl} onChange={e => { setConfigUrl(e.target.value); setError(null); }}
+          placeholder="https://evolution.seudominio.com"/>
+      </label>
+      <p id="evolution-url-help" className={`text-xs ${invalidGatewayUrl ? "text-red-700" : "text-[#718077]"}`}>
+        {invalidGatewayUrl ? "Endereço inválido. Digite uma URL HTTPS da Evolution API, não um e-mail ou usuário." : "Exemplo: https://evolution.seudominio.com. Em uma rede privada Railway, use o endereço interno configurado pelo serviço."}
+      </p>
+      <label className="grid gap-1 text-sm" htmlFor="evolution-api-token">Chave de acesso da Evolution API
+        <input id="evolution-api-token" name="evolution_api_access_token" type="password"
+          autoComplete="new-password" className="rounded-xl border p-3" value={configKey}
+          onChange={e => { setConfigKey(e.target.value); setError(null); }}
+          placeholder="Chave API do servidor Evolution"/>
+      </label>
+      <p className="text-xs text-[#718077]">A chave é obtida na configuração do servidor Evolution e fica armazenada de forma protegida. Não é sua senha de administrador.</p>
+      <button className="btn btn-primary justify-self-start" disabled={busy || !validGatewayUrl || configKey.trim().length < 8}
+        onClick={() => void save()}>{busy ? "Salvando..." : "Salvar configuração"}</button>
+    </section>
     {loading ? <div role="status" className="p-8 text-center">Carregando números...</div> : <section className="grid grid-cols-2 gap-4 max-[800px]:grid-cols-1">{slots.map(({ account, id, label }) => {
       const online = account ? connected(account) : false;
       return <article key={id} className={`panel p-5 ${online ? "border-[#a9ddba]" : ""}`}><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className={`grid h-12 w-12 place-items-center rounded-2xl ${online ? "bg-[#dff6e7] text-[#238847]" : "bg-[#f1f4f2] text-[#87978c]"}`}><Smartphone size={23}/></div><div><h2 className="font-semibold text-[#26392d]">{label}</h2><p className="mt-1 text-sm text-[#6b7b70]">{account?.phone ? `+${account.phone}` : online ? "Sincronizando telefone..." : "Nenhum número conectado"}</p></div></div><span className={`status ${online ? "status-success" : "status-neutral"}`}>{online ? "Conectado" : account ? "Desconectado" : "Disponível"}</span></div>
