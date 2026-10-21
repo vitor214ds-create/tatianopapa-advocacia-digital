@@ -254,6 +254,7 @@ export async function createQueuedCampaign(
     message: string;
     createdBy: string;
     recipients: QueueRecipient[];
+    selectedSessionIds: string[];
     scheduledAt?: string;
     scheduledEndAt?: string;
   },
@@ -268,8 +269,12 @@ export async function createQueuedCampaign(
   const rejected = prepared.rejected + persistent.rejected;
   if (!eligible.length) throw new Error("Nenhum destinatário elegível para a campanha");
 
-  const sessions = await loadActiveSessions(request, input.organizationId);
-  if (!sessions.length) throw new Error("Nenhuma sessão WhatsApp conectada e habilitada");
+  const availableSessions = await loadActiveSessions(request, input.organizationId);
+  const selected = new Set(input.selectedSessionIds);
+  const sessions = availableSessions.filter(session => selected.has(session.id));
+  if (!sessions.length || sessions.length !== selected.size) {
+    throw new Error("Uma ou mais sessões selecionadas estão desconectadas, desabilitadas ou não pertencem à organização");
+  }
 
   const allocations = allocateEvenly(eligible, sessions);
   const headers = userHeaders(request);
