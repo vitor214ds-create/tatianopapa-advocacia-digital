@@ -298,6 +298,7 @@ function CampaignsPage({
   const [message, setMessage] = useState("");
   const [recipientText, setRecipientText] = useState("");
   const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
   const [deliveryMode, setDeliveryMode] = useState<"now" | "scheduled">("now");
   const [scheduledLocal, setScheduledLocal] = useState("");
   const [scheduledEndLocal, setScheduledEndLocal] = useState("");
